@@ -27,10 +27,10 @@ app.add_middleware(
 )
 
 SAMPLE_RATE = 16000
-WINDOW_DURATION = 2.0
-STEP_DURATION = 0.5
+WINDOW_DURATION = 1.2
+STEP_DURATION   = 0.25
 WINDOW_BYTES = int(SAMPLE_RATE * WINDOW_DURATION * 4)
-STEP_BYTES = int(SAMPLE_RATE * STEP_DURATION * 4)
+STEP_BYTES   = int(SAMPLE_RATE * STEP_DURATION * 4)
 
 
 @app.get("/health")
@@ -46,7 +46,10 @@ async def websocket_endpoint(ws: WebSocket):
     audio_buffer = bytearray()
     new_bytes_since_last = 0
     last_transcript = ""
-    processing = False
+    active_tasks = 0
+    MAX_CONCURRENT = 2
+
+    executor = None 
 
     try:
         while True:
@@ -68,45 +71,49 @@ async def websocket_endpoint(ws: WebSocket):
 
                 buf_sec = len(audio_buffer) / 4 / SAMPLE_RATE
                 new_sec = new_bytes_since_last / 4 / SAMPLE_RATE
-                print(f"[Audio] buffer={buf_sec:.1f}s  baru={new_sec:.2f}s  processing={processing}")
 
                 if (new_bytes_since_last >= STEP_BYTES
                         and len(audio_buffer) >= WINDOW_BYTES
-                        and not processing):
+                        and active_tasks < MAX_CONCURRENT):
 
                     process_bytes = bytes(audio_buffer[-WINDOW_BYTES:])
                     new_bytes_since_last = 0
-                    processing = True
+                    active_tasks += 1
 
                     async def run_pipeline(pcm: bytes):
-                        nonlocal last_transcript, processing
+                        nonlocal last_transcript, active_tasks
                         t_start = time.monotonic()
                         try:
-                            transcript = await asyncio.get_event_loop().run_in_executor(
+                            loop = asyncio.get_running_loop()
+                            transcript = await loop.run_in_executor(
                                 None, transcribe_audio, pcm, SAMPLE_RATE
                             )
                             t_stt = time.monotonic() - t_start
 
-                            if not transcript or transcript == last_transcript:
+                            if not transcript:
+                                return
+
+                            if transcript == last_transcript:
                                 return
 
                             last_transcript = transcript
+
                             translation = await translate_ko_to_id(transcript)
                             t_total = time.monotonic() - t_start
 
-                            print(f"[{t_stt:.2f}s stt / {t_total:.2f}s total] KO: {transcript}")
+                            print(f"[{t_stt*1000:.0f}ms stt / {t_total*1000:.0f}ms total] KO: {transcript}")
                             print(f"  ID: {translation}")
 
                             await ws.send_text(json.dumps({
-                                "type": "subtitle",
-                                "korean": transcript,
-                                "indonesian": translation,
-                                "latency_ms": round(t_total * 1000),
+                                "type":        "subtitle",
+                                "korean":      transcript,
+                                "indonesian":  translation,
+                                "latency_ms":  round(t_total * 1000),
                             }))
                         except Exception as e:
                             print(f"[Pipeline] Error: {e}")
                         finally:
-                            processing = False
+                            active_tasks -= 1
 
                     asyncio.create_task(run_pipeline(process_bytes))
 
@@ -117,7 +124,7 @@ async def websocket_endpoint(ws: WebSocket):
                 audio_buffer.clear()
                 new_bytes_since_last = 0
                 last_transcript = ""
-                processing = False
+                active_tasks = 0
                 print("[WS] Buffer direset.")
 
     except WebSocketDisconnect:
