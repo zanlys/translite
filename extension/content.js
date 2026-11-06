@@ -4,18 +4,21 @@
   if (window.__transliteInjected) return;
   window.__transliteInjected = true;
 
-  let overlayEl = null;
-  let koreanEl = null;
+  let overlayEl    = null;
+  let koreanEl     = null;
   let indonesianEl = null;
-  let statusEl = null;
-  let hideTimer = null;
+  let partialEl    = null;
+  let statusEl     = null;
+  let hideTimer    = null;
+  let partialTimer = null;
 
   function createOverlay() {
     if (document.getElementById("ws-subtitle-overlay")) {
-      overlayEl = document.getElementById("ws-subtitle-overlay");
-      koreanEl = document.getElementById("ws-subtitle-korean");
+      overlayEl    = document.getElementById("ws-subtitle-overlay");
+      koreanEl     = document.getElementById("ws-subtitle-korean");
       indonesianEl = document.getElementById("ws-subtitle-indonesian");
-      statusEl = document.getElementById("ws-subtitle-status");
+      partialEl    = document.getElementById("ws-subtitle-partial");
+      statusEl     = document.getElementById("ws-subtitle-status");
       return;
     }
 
@@ -33,20 +36,23 @@
       pointer-events: none !important;
       transition: opacity 0.3s ease;
     `;
+
     overlayEl.innerHTML = `
       <div id="ws-subtitle-status"></div>
+      <div id="ws-subtitle-partial"></div>
       <div id="ws-subtitle-korean"></div>
       <div id="ws-subtitle-indonesian"></div>
     `;
     document.documentElement.appendChild(overlayEl);
 
-    koreanEl = document.getElementById("ws-subtitle-korean");
+    koreanEl     = document.getElementById("ws-subtitle-korean");
     indonesianEl = document.getElementById("ws-subtitle-indonesian");
-    statusEl = document.getElementById("ws-subtitle-status");
+    partialEl    = document.getElementById("ws-subtitle-partial");
+    statusEl     = document.getElementById("ws-subtitle-status");
 
     if (indonesianEl) {
       indonesianEl.style.cssText = `
-        display: block; font-size: 22px; font-weight: 700;
+        display: none; font-size: 22px; font-weight: 700;
         color: #ffffff; font-family: 'Segoe UI', sans-serif;
         text-shadow: -2px -2px 0 #000, 2px -2px 0 #000,
                      -2px 2px 0 #000, 2px 2px 0 #000, 0 0 8px rgba(0,0,0,0.9);
@@ -62,6 +68,18 @@
         border-radius: 4px; margin-bottom: 4px;
       `;
     }
+    if (partialEl) {
+      partialEl.style.cssText = `
+        display: none; font-size: 18px; font-weight: 400;
+        color: #e8e8e8; font-family: 'Segoe UI', sans-serif;
+        font-style: italic; opacity: 0.85;
+        text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
+                     -1px 1px 0 #000, 1px 1px 0 #000;
+        background: rgba(0,0,0,0.45); padding: 4px 14px;
+        border-radius: 5px; margin-bottom: 4px; line-height: 1.4;
+        transition: opacity 0.15s ease;
+      `;
+    }
     if (statusEl) {
       statusEl.style.cssText = `
         display: block; font-size: 11px; color: #00e5ff;
@@ -71,24 +89,61 @@
     }
   }
 
+  function showPartial(korean) {
+    createOverlay();
+    if (!korean) return;
+
+    if (partialEl) {
+      partialEl.textContent   = "…";
+      partialEl.style.display = "block";
+      partialEl.style.opacity = "0.7";
+    }
+    if (overlayEl) overlayEl.style.opacity = "1";
+
+    if (hideTimer) clearTimeout(hideTimer);
+
+    if (partialTimer) clearTimeout(partialTimer);
+    partialTimer = setTimeout(() => {
+      if (partialEl) {
+        partialEl.style.opacity = "0";
+        setTimeout(() => {
+          if (partialEl) partialEl.style.display = "none";
+        }, 150);
+      }
+    }, 3000);
+  }
+
   function showSubtitle(korean, indonesian, latencyMs) {
     createOverlay();
+
+    if (partialTimer) clearTimeout(partialTimer);
+    if (partialEl) {
+      partialEl.style.opacity = "0";
+      setTimeout(() => {
+        if (partialEl) partialEl.style.display = "none";
+      }, 150);
+    }
+
     if (indonesianEl) {
       indonesianEl.textContent   = indonesian || "";
       indonesianEl.style.display = indonesian ? "block" : "none";
     }
     if (koreanEl) {
-      koreanEl.textContent   = korean || "";
+      koreanEl.textContent   = "";
       koreanEl.style.display = "none";
     }
     if (statusEl) statusEl.textContent = latencyMs ? `⚡ ${latencyMs}ms` : "";
+
     if (overlayEl) overlayEl.style.opacity = "1";
     if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => { if (overlayEl) overlayEl.style.opacity = "0"; }, 5000);
+    hideTimer = setTimeout(() => {
+      if (overlayEl) overlayEl.style.opacity = "0";
+    }, 5000);
   }
 
   function hideSubtitle() {
     if (overlayEl) overlayEl.style.opacity = "0";
+    if (partialEl) partialEl.style.display = "none";
   }
 
   function setStatus(text, color) {
@@ -99,6 +154,9 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message.type) {
+      case "show_partial":
+        showPartial(message.korean);
+        break;
       case "show_subtitle":
         showSubtitle(message.korean, message.indonesian, message.latency_ms);
         break;

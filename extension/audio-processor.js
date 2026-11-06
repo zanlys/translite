@@ -2,11 +2,12 @@ class SubtitleProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this._buffer = [];
-    this._chunkSamples = 16000 * 0.25;
+    this._chunkSamples = 16000 * 0.1;
 
-    this._silenceThreshold = 0.0008;
+    this._silenceThreshold = 0.0005;
     this._consecutiveSilence = 0;
-    this._maxSilenceFrames = 3;
+    this._maxSilenceFrames = 20;
+    this._chunkSeq = 0;
   }
 
   process(inputs) {
@@ -26,7 +27,7 @@ class SubtitleProcessor extends AudioWorkletProcessor {
 
     if (rms < this._silenceThreshold) {
       this._consecutiveSilence++;
-      if (this._consecutiveSilence > this._maxSilenceFrames) {
+      if (this._consecutiveSilence > 50) {
         this._buffer = [];
         this._consecutiveSilence = 0;
         return true;
@@ -35,9 +36,14 @@ class SubtitleProcessor extends AudioWorkletProcessor {
       this._consecutiveSilence = 0;
     }
 
-    if (this._buffer.length >= this._chunkSamples) {
+    while (this._buffer.length >= this._chunkSamples) {
       const chunk = new Float32Array(this._buffer.splice(0, this._chunkSamples));
-      this.port.postMessage({ type: "chunk", samples: chunk }, [chunk.buffer]);
+      this.port.postMessage({
+        type:      "chunk",
+        samples:   chunk,
+        seq:       this._chunkSeq++,
+        captureTs: currentTime,
+      }, [chunk.buffer]);
     }
 
     return true;

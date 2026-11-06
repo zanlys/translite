@@ -7,6 +7,9 @@ let isCapturing = false;
 let activeSubtitleTabId = null;
 let reconnectTimer = null;
 
+let latestSubtitleSeq = -1;
+let latestPartialSeq  = -1;
+
 function connectWebSocket() {
   return new Promise((resolve, reject) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -40,20 +43,44 @@ function connectWebSocket() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === "subtitle" && activeSubtitleTabId) {
+
+        if (data.type === "partial") {
+          const seq = data.seq ?? 0;
+          if (seq < latestPartialSeq) return;
+          latestPartialSeq = seq;
+
+          if (activeSubtitleTabId) {
+            chrome.tabs.sendMessage(activeSubtitleTabId, {
+              type:   "show_partial",
+              korean: data.korean,
+              seq:    seq,
+            }).catch(() => {});
+          }
+
+        } else if (data.type === "subtitle") {
+          const seq = data.seq ?? 0;
+          if (seq <= latestSubtitleSeq) {
+            console.log(`[BG] Drop subtitle lama seq=${seq} (latest=${latestSubtitleSeq})`);
+            return;
+          }
+          latestSubtitleSeq = seq;
+
           chrome.runtime.sendMessage({
             type: "latency_update",
             ms:   data.latency_ms,
           }).catch(() => {});
 
-          chrome.tabs.sendMessage(activeSubtitleTabId, {
-            type:       "show_subtitle",
-            korean:     data.korean,
-            indonesian: data.indonesian,
-            latency_ms: data.latency_ms,
-          }).catch(() => {
-            injectSubtitleLangsung(activeSubtitleTabId, data.korean, data.indonesian, data.latency_ms);
-          });
+          if (activeSubtitleTabId) {
+            chrome.tabs.sendMessage(activeSubtitleTabId, {
+              type:       "show_subtitle",
+              korean:     data.korean,
+              indonesian: data.indonesian,
+              latency_ms: data.latency_ms,
+              seq:        seq,
+            }).catch(() => {
+              injectSubtitleLangsung(activeSubtitleTabId, data.korean, data.indonesian, data.latency_ms);
+            });
+          }
         }
       } catch (e) {
         console.error("[BG] Error parse WS:", e);
@@ -103,16 +130,16 @@ function injectSubtitleLangsung(tabId, korean, indonesian, latencyMs) {
         ].join("!important;") + "!important;";
         overlay.innerHTML = [
           '<div id="ws-subtitle-status" style="font-size:11px;color:#00e5ff;font-family:monospace;margin-bottom:6px;"></div>',
-          '<div id="ws-subtitle-korean" style="display:none;font-size:13px;color:#ccc;background:rgba(0,0,0,.45);padding:3px 12px;border-radius:4px;margin-bottom:4px;font-family:sans-serif;"></div>',
+          '<div id="ws-subtitle-partial" style="display:none;font-size:18px;font-weight:400;color:#e0e0e0;background:rgba(0,0,0,.5);padding:4px 12px;border-radius:5px;margin-bottom:4px;font-family:sans-serif;font-style:italic;"></div>',
           '<div id="ws-subtitle-indonesian" style="font-size:22px;font-weight:700;color:#fff;text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000;background:rgba(0,0,0,.6);padding:6px 16px;border-radius:6px;margin-bottom:4px;line-height:1.4;font-family:sans-serif;"></div>',
         ].join("");
         document.documentElement.appendChild(overlay);
       }
       const idEl = document.getElementById("ws-subtitle-indonesian");
-      const koEl = document.getElementById("ws-subtitle-korean");
       const stEl = document.getElementById("ws-subtitle-status");
+      const ptEl = document.getElementById("ws-subtitle-partial");
+      if (ptEl) { ptEl.textContent = ""; ptEl.style.display = "none"; }
       if (idEl) { idEl.textContent = ind; idEl.style.display = ind ? "block" : "none"; }
-      if (koEl) { koEl.textContent = kor; koEl.style.display = kor ? "block" : "none"; }
       if (stEl) stEl.textContent = lat ? `⚡ ${lat}ms` : "";
       overlay.style.opacity = "1";
       if (window.__wsHideTimer) clearTimeout(window.__wsHideTimer);
@@ -141,6 +168,9 @@ async function startCapture(tabId) {
 
   try {
     activeSubtitleTabId = tabId;
+
+    latestSubtitleSeq = -1;
+    latestPartialSeq  = -1;
 
     const streamId = await new Promise((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
@@ -186,6 +216,8 @@ async function stopCapture() {
   isCapturing = false;
   captureTabId = null;
   activeSubtitleTabId = null;
+  latestSubtitleSeq = -1;
+  latestPartialSeq  = -1;
   await chrome.storage.local.set({ isCapturing: false, captureTabId: null });
 
   if (prevTab) chrome.tabs.sendMessage(prevTab, { type: "hide_subtitle" }).catch(() => {});
