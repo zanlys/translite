@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Translite</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 300px;
+      background: #ffffff;
+      color: #1a1a2e;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: #5b52e8;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+
+    .header-title { font-size: 15px; font-weight: 700; color: #1a1a2e; }
+    .header-sub   { font-size: 11px; color: #888899; margin-top: 1px; }
+
+    .warning {
+      display: none; align-items: center; gap: 8px;
+      background: #fffbeb; border: 1px solid #fcd34d;
+      border-radius: 8px; padding: 10px 12px;
+      font-size: 12px; color: #92400e; line-height: 1.4;
+    }
+    .warning.show { display: flex; }
+
+    .status-card {
+      background: #f5f5f8;
+      border: 1px solid #e4e4ec;
+      border-radius: 10px; padding: 11px 14px;
+      display: flex; align-items: center; gap: 10px;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #c8c8d8; flex-shrink: 0;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .status-dot.active {
+      background: #16a34a;
+      box-shadow: 0 0 0 3px rgba(22,163,74,0.15);
+    }
+    .status-dot.error {
+      background: #dc2626;
+      box-shadow: 0 0 0 3px rgba(220,38,38,0.15);
+    }
+    .status-dot.warn {
+      background: #d97706;
+      box-shadow: 0 0 0 3px rgba(217,119,6,0.15);
+    }
+
+    .status-text { font-size: 12.5px; color: #55556a; flex: 1; }
+
+    .latency-badge {
+      font-size: 10px; color: #5b52e8;
+      background: #eeecfd;
+      border-radius: 4px; padding: 2px 6px;
+      font-family: monospace; opacity: 0; transition: opacity 0.3s;
+    }
+    .latency-badge.show { opacity: 1; }
+
+    .toggle-btn {
+      width: 100%; padding: 13px; border: none; border-radius: 10px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      background: #5b52e8;
+      color: #fff; letter-spacing: 0.2px;
+    }
+    .toggle-btn:hover { background: #4a42d6; }
+    .toggle-btn:active { transform: scale(0.99); }
+    .toggle-btn.active { background: #dc2626; }
+    .toggle-btn.active:hover { background: #b91c1c; }
+    .toggle-btn:disabled {
+      background: #e4e4ec; color: #aaaabc; cursor: not-allowed;
+      transform: none;
+    }
+
+    hr { border: none; border-top: 1px solid #e4e4ec; }
+
+    .info { font-size: 11px; color: #9999aa; line-height: 1.7; }
+    .info strong { color: #55556a; }
+    .info code {
+      font-family: monospace; font-size: 10.5px;
+      background: #f0f0f5; color: #3a3a55;
+      padding: 1px 5px; border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">🎙</div>
+    <div>
+      <div class="header-title">Translite</div>
+      <div class="header-sub">KR → ID Real-time</div>
+    </div>
+  </div>
+
+  <div class="warning" id="notSupportedWarning">
+    Halaman ini tidak dapat di-capture.
+  </div>
+
+  <div class="status-card">
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-text" id="statusText">Memeriksa server...</span>
+    <span class="latency-badge" id="latencyBadge"></span>
+  </div>
+
+  <button class="toggle-btn" id="toggleBtn" disabled>Memuat...</button>
+
+  <hr>
+
+  <div class="info">
+    Server lokal harus berjalan di <strong>localhost:8765</strong>.<br>
+    Jalankan <code>start.bat</code> di folder <code>server/</code>.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

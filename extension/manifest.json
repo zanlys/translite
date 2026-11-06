@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Translite",
+  "version": "1.0.0",
+  "description": "Real time Korean to Indonesian subtitle on any website using local STT + DeepL",
+  "permissions": [
+    "tabCapture",
+    "storage",
+    "scripting",
+    "activeTab",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:8765/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["audio-processor.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
