@@ -1,5 +1,4 @@
 server/venv/
-.vscode
 server/.env
 server/config.json
 
@@ -17,3 +16,5 @@ server/*.zip
 .DS_Store
 Thumbs.db
 desktop.ini
+
+.vscode/

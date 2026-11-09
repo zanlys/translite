@@ -35,7 +35,7 @@ Saat pertama kali dijalankan, script akan otomatis:
 3. Mengunduh model SenseVoice (~155MB, sekali saja)
 4. Membuat file `config.json` dengan nilai default
 
-Setelah itu akan muncul menu:
+Setelah selesai akan muncul menu:
 
 ```
   1. Start Server
@@ -74,10 +74,7 @@ Semua konfigurasi disimpan di `server/config.json` dan bisa diubah melalui menu 
 | **DeepL** | `api_key` | — | Wajib diisi |
 | | `free_tier` | `true` | `true` = Free, `false` = Pro |
 | | `timeout_seconds` | `3.0` | Timeout request ke DeepL (detik) |
-| **Server** | `host` | `localhost` | Ubah ke `0.0.0.0` untuk akses dari luar |
-| | `port` | `8765` | Port WebSocket server |
 | **STT** | `num_threads` | `2` | Thread CPU untuk inferensi (naikkan sesuai core CPU) |
-| | `language` | `ko` | Bahasa input: `ko`, `zh`, `en`, `ja` |
 | | `use_itn` | `false` | Normalisasi teks (angka, dll) |
 | **VAD** | `silence_trigger_seconds` | `0.20` | Jeda hening sebelum audio diproses (detik) |
 | | `max_utterance_seconds` | `6.0` | Durasi maksimal satu kalimat |
