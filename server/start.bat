@@ -61,7 +61,7 @@ if not exist "%MODEL_FILE%" (
     echo [*] Model SenseVoice belum ada, mengunduh sekitar 155MB...
     echo [*] Jangan tutup window ini.
     echo.
-    python -c "import urllib.request, sys; url='https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2'; prog=lambda c,b,t: (sys.stdout.write('\r  [%-20s] %d%%' % ('#'*min(int(c*b*100/t),100)//5, min(int(c*b*100/t),100))), sys.stdout.flush()); urllib.request.urlretrieve(url,'model.tar.bz2',reporthook=prog); print()"
+    python -c "import urllib.request, sys; url='https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2'; prog=lambda c,b,t: (sys.stdout.write('\r  [%-20s] %d%%' % ('#'*(min(int(c*b*100/t),100)//5), min(int(c*b*100/t),100))), sys.stdout.flush()); urllib.request.urlretrieve(url,'model.tar.bz2',reporthook=prog); print()"
     if errorlevel 1 (
         echo.
         echo [!] Gagal mengunduh model. Cek koneksi internet dan coba lagi.
