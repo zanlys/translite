@@ -3,6 +3,7 @@ import asyncio
 import base64
 import json
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
@@ -51,28 +52,33 @@ app.add_middleware(
 
 class LatencyTracker:
     def __init__(self, name: str, max_samples: int = 100):
-        self.name = name
-        self._samples: list[float] = []
-        self._max = max_samples
+        self.name     = name
+        self._samples = deque(maxlen=max_samples)
 
     def record(self, ms: float):
         self._samples.append(ms)
-        if len(self._samples) > self._max:
-            self._samples.pop(0)
+
+    def _sorted(self) -> list:
+        return sorted(self._samples)
 
     def p50(self) -> float:
         if not self._samples: return 0.0
-        s = sorted(self._samples)
+        s = self._sorted()
         return s[int(len(s) * 0.50)]
 
     def p95(self) -> float:
         if not self._samples: return 0.0
-        s = sorted(self._samples)
+        s = self._sorted()
         return s[int(len(s) * 0.95)]
 
+    def stats(self) -> tuple[float, float]:
+        if not self._samples: return 0.0, 0.0
+        s = self._sorted()
+        return s[int(len(s) * 0.50)], s[int(len(s) * 0.95)]
+
     def report(self) -> str:
-        return (f"[{self.name}] p50={self.p50():.0f}ms "
-                f"p95={self.p95():.0f}ms (n={len(self._samples)})")
+        p50, p95 = self.stats()
+        return f"[{self.name}] p50={p50:.0f}ms p95={p95:.0f}ms (n={len(self._samples)})"
 
 
 lat_stt   = LatencyTracker("STT")
@@ -82,16 +88,19 @@ lat_e2e   = LatencyTracker("E2E")
 
 @app.get("/health")
 async def health():
+    stt_p50,   stt_p95   = lat_stt.stats()
+    trans_p50, trans_p95 = lat_trans.stats()
+    e2e_p50,   e2e_p95   = lat_e2e.stats()
     return {
         "status": "ok",
         "server": "translite",
         "latency": {
-            "stt_p50_ms":   round(lat_stt.p50()),
-            "stt_p95_ms":   round(lat_stt.p95()),
-            "trans_p50_ms": round(lat_trans.p50()),
-            "trans_p95_ms": round(lat_trans.p95()),
-            "e2e_p50_ms":   round(lat_e2e.p50()),
-            "e2e_p95_ms":   round(lat_e2e.p95()),
+            "stt_p50_ms":   round(stt_p50),
+            "stt_p95_ms":   round(stt_p95),
+            "trans_p50_ms": round(trans_p50),
+            "trans_p95_ms": round(trans_p95),
+            "e2e_p50_ms":   round(e2e_p50),
+            "e2e_p95_ms":   round(e2e_p95),
         }
     }
 
@@ -104,18 +113,19 @@ async def websocket_endpoint(ws: WebSocket):
     audio_buffer        = bytearray()
     last_transcript     = ""
     stt_seq             = 0
-    trans_seq           = 0
     stt_active_count    = 0
     stt_lock            = asyncio.Lock()
     silence_frame_count = 0
     has_voice_started   = False
     utterance_start_ts  = 0.0
     latest_sent_seq     = -1
+    latest_queued_seq   = -1
 
     translate_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
+    pending_tasks: set[asyncio.Task] = set()
 
     async def translation_worker():
-        nonlocal trans_seq, latest_sent_seq
+        nonlocal latest_sent_seq
         while True:
             try:
                 item = await asyncio.wait_for(translate_queue.get(), timeout=1.0)
@@ -127,22 +137,24 @@ async def websocket_endpoint(ws: WebSocket):
 
             seq, transcript, start_ts = item
 
-            try:
-                peek_seq = translate_queue._queue[0][0]
-                if not translate_queue.empty() and peek_seq > seq + 2:
-                    print(f"[Trans] Skip seq {seq}, ada seq {peek_seq} lebih baru")
-                    continue
-            except (IndexError, AttributeError):
-                pass
+            if seq <= latest_sent_seq:
+                translate_queue.task_done()
+                continue
+
+            if not translate_queue.empty() and latest_queued_seq > seq + 2:
+                print(f"[Trans] Skip seq {seq}, ada seq {latest_queued_seq} lebih baru")
+                translate_queue.task_done()
+                continue
 
             t_start = time.monotonic()
             try:
                 translation = await translate_ko_to_id(transcript)
             except Exception as e:
                 print(f"[Trans] Error seq {seq}: {e}")
-                continue
-            finally:
                 translate_queue.task_done()
+                continue
+
+            translate_queue.task_done()
 
             t_trans_ms = (time.monotonic() - t_start) * 1000
             lat_trans.record(t_trans_ms)
@@ -152,8 +164,7 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
 
             latest_sent_seq = seq
-
-            e2e_ms   = (time.monotonic() - start_ts) * 1000 if start_ts > 0 else 0
+            e2e_ms  = (time.monotonic() - start_ts) * 1000 if start_ts > 0 else 0
             total_ms = round(e2e_ms)
             lat_e2e.record(e2e_ms)
 
@@ -177,6 +188,7 @@ async def websocket_endpoint(ws: WebSocket):
     async def run_stt(pcm: bytes, seq: int, start_ts: float):
         nonlocal last_transcript, stt_active_count
 
+        incremented = False
         t_start = time.monotonic()
         try:
             loop       = asyncio.get_running_loop()
@@ -194,18 +206,11 @@ async def websocket_endpoint(ws: WebSocket):
         if not transcript:
             return
 
-        if transcript != last_transcript:
-            try:
-                await ws.send_text(json.dumps({
-                    "type":   "partial",
-                    "korean": transcript,
-                    "seq":    seq,
-                }))
-            except Exception:
-                pass
-
         last_transcript = transcript
         print(f"[STT {t_stt_ms:.0f}ms] seq={seq} KO: {transcript}")
+
+        nonlocal latest_queued_seq
+        latest_queued_seq = max(latest_queued_seq, seq)
 
         try:
             translate_queue.put_nowait((seq, transcript, start_ts))
@@ -276,7 +281,9 @@ async def websocket_endpoint(ws: WebSocket):
                         has_voice_started   = False
 
                         stt_seq += 1
-                        asyncio.create_task(run_stt(process_bytes, stt_seq, utterance_start_ts))
+                        task = asyncio.create_task(run_stt(process_bytes, stt_seq, utterance_start_ts))
+                        pending_tasks.add(task)
+                        task.add_done_callback(pending_tasks.discard)
 
                 if time.monotonic() - report_timer > 60.0:
                     report_timer = time.monotonic()
@@ -295,6 +302,7 @@ async def websocket_endpoint(ws: WebSocket):
                     stt_active_count = 0
                 stt_seq             = 0
                 latest_sent_seq     = -1
+                latest_queued_seq   = -1
                 silence_frame_count = 0
                 has_voice_started   = False
                 utterance_start_ts  = 0.0
@@ -316,6 +324,9 @@ async def websocket_endpoint(ws: WebSocket):
         except Exception:
             pass
     finally:
+        for task in pending_tasks:
+            task.cancel()
+
         await translate_queue.put(None)
         try:
             await asyncio.wait_for(trans_worker_task, timeout=3.0)

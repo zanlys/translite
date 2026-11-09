@@ -1,14 +1,16 @@
 const WS_URL        = "ws://localhost:8765/ws";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
+const MAX_RECONNECT = 5;
 
 let ws                  = null;
 let captureTabId        = null;
 let isCapturing         = false;
 let activeSubtitleTabId = null;
 let reconnectTimer      = null;
+let reconnectCount      = 0;
 let latestSubtitleSeq   = -1;
-let latestPartialSeq    = -1;
 let latencyMs           = 0;
+let latencyWriteTimer   = null;
 
 function connectWebSocket() {
   return new Promise((resolve, reject) => {
@@ -36,6 +38,7 @@ function connectWebSocket() {
 
     ws.onopen = () => {
       clearTimeout(timeout);
+      reconnectCount = 0;
       broadcastToContent({ type: "server_connected" });
       resolve();
     };
@@ -44,32 +47,24 @@ function connectWebSocket() {
       try {
         const data = JSON.parse(event.data);
 
-        if (data.type === "partial") {
-          const seq = data.seq ?? 0;
-          if (seq < latestPartialSeq) return;
-          latestPartialSeq = seq;
-          if (activeSubtitleTabId) {
-            chrome.tabs.sendMessage(activeSubtitleTabId, {
-              type:   "show_partial",
-              korean: data.korean,
-              seq,
-            }).catch(() => {});
-          }
-        } else if (data.type === "subtitle") {
+        if (data.type === "subtitle") {
           const seq = data.seq ?? 0;
           if (seq <= latestSubtitleSeq) return;
           latestSubtitleSeq = seq;
           latencyMs = data.latency_ms;
-          chrome.storage.local.set({ latencyMs: data.latency_ms }).catch(() => {});
+
+          if (latencyWriteTimer) clearTimeout(latencyWriteTimer);
+          latencyWriteTimer = setTimeout(() => {
+            chrome.storage.local.set({ latencyMs }).catch(() => {});
+          }, 5000);
+
           if (activeSubtitleTabId) {
             chrome.tabs.sendMessage(activeSubtitleTabId, {
               type:       "show_subtitle",
-              korean:     data.korean,
               indonesian: data.indonesian,
-              latency_ms: data.latency_ms,
               seq,
             }).catch(() => {
-              injectSubtitleLangsung(activeSubtitleTabId, data.korean, data.indonesian, data.latency_ms);
+              injectSubtitleLangsung(activeSubtitleTabId, data.indonesian);
             });
           }
         }
@@ -82,8 +77,16 @@ function connectWebSocket() {
 
     ws.onclose = () => {
       ws = null;
-      if (isCapturing) {
-        reconnectTimer = setTimeout(() => connectWebSocket().catch(console.error), 3000);
+      if (isCapturing && reconnectCount < MAX_RECONNECT) {
+        reconnectCount++;
+        const delay = Math.min(1000 * 2 ** reconnectCount, 30000);
+        console.log(`[BG] Reconnect ${reconnectCount}/${MAX_RECONNECT} dalam ${delay}ms`);
+        reconnectTimer = setTimeout(() => connectWebSocket().catch(console.error), delay);
+      } else if (reconnectCount >= MAX_RECONNECT) {
+        console.warn("[BG] Max reconnect tercapai, berhenti retry.");
+        broadcastToContent({ type: "server_error", message: "Server tidak dapat dijangkau. Restart server dan klik Stop lalu Start lagi." });
+        isCapturing = false;
+        chrome.storage.local.set({ isCapturing: false }).catch(() => {});
       }
     };
   });
@@ -101,42 +104,37 @@ function broadcastToContent(message) {
   }
 }
 
-function injectSubtitleLangsung(tabId, korean, indonesian, latMs) {
-  const kor = (korean     || "").replace(/\\/g, "\\\\").replace(/`/g, "'");
+function injectSubtitleLangsung(tabId, indonesian) {
   const ind = (indonesian || "").replace(/\\/g, "\\\\").replace(/`/g, "'");
-  const lat = latMs || 0;
 
   chrome.scripting.executeScript({
     target: { tabId },
-    func: (kor, ind, lat) => {
+    func: (ind) => {
       let overlay = document.getElementById("ws-subtitle-overlay");
       if (!overlay) {
         overlay = document.createElement("div");
         overlay.id = "ws-subtitle-overlay";
         overlay.style.cssText = [
-          "position:fixed","bottom:80px","left:50%",
-          "transform:translateX(-50%)","z-index:2147483647",
-          "max-width:80vw","min-width:280px","text-align:center",
-          "pointer-events:none","transition:opacity 0.3s",
+          "position:fixed", "bottom:80px", "left:50%",
+          "transform:translateX(-50%)", "z-index:2147483647",
+          "max-width:80vw", "min-width:280px", "text-align:center",
+          "pointer-events:none", "transition:opacity 0.3s",
         ].join("!important;") + "!important;";
         overlay.innerHTML = [
           '<div id="ws-subtitle-status" style="font-size:11px;color:#00e5ff;font-family:monospace;margin-bottom:6px;"></div>',
-          '<div id="ws-subtitle-partial" style="display:none;font-size:18px;font-weight:400;color:#e0e0e0;background:rgba(0,0,0,.5);padding:4px 12px;border-radius:5px;margin-bottom:4px;font-family:sans-serif;font-style:italic;"></div>',
           '<div id="ws-subtitle-indonesian" style="font-size:22px;font-weight:700;color:#fff;text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000;background:rgba(0,0,0,.6);padding:6px 16px;border-radius:6px;margin-bottom:4px;line-height:1.4;font-family:sans-serif;"></div>',
         ].join("");
         document.documentElement.appendChild(overlay);
       }
       const idEl = document.getElementById("ws-subtitle-indonesian");
       const stEl = document.getElementById("ws-subtitle-status");
-      const ptEl = document.getElementById("ws-subtitle-partial");
-      if (ptEl) { ptEl.textContent = ""; ptEl.style.display = "none"; }
       if (idEl) { idEl.textContent = ind; idEl.style.display = ind ? "block" : "none"; }
       if (stEl) stEl.textContent = "";
       overlay.style.opacity = "1";
       if (window.__wsHideTimer) clearTimeout(window.__wsHideTimer);
       window.__wsHideTimer = setTimeout(() => { overlay.style.opacity = "0"; }, 5000);
     },
-    args: [kor, ind, lat],
+    args: [ind],
   }).catch(e => console.error("[BG] executeScript gagal:", e.message));
 }
 
@@ -162,7 +160,7 @@ async function startCapture(tabId) {
   try {
     activeSubtitleTabId = tabId;
     latestSubtitleSeq   = -1;
-    latestPartialSeq    = -1;
+    reconnectCount      = 0;
 
     const streamId = await new Promise((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
@@ -193,20 +191,26 @@ async function startCapture(tabId) {
 
 async function stopCapture() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (latencyWriteTimer) { clearTimeout(latencyWriteTimer); latencyWriteTimer = null; }
+
   await chrome.runtime.sendMessage({ type: "stop_capture" }).catch(() => {});
+
   if (ws) {
     try { ws.send(JSON.stringify({ type: "reset" })); } catch (_) {}
     ws.close();
     ws = null;
   }
+
   await closeOffscreenDocument();
+
   const prevTab       = activeSubtitleTabId;
   isCapturing         = false;
   captureTabId        = null;
   activeSubtitleTabId = null;
   latestSubtitleSeq   = -1;
-  latestPartialSeq    = -1;
+  reconnectCount      = 0;
   await chrome.storage.local.set({ isCapturing: false, captureTabId: null });
+
   if (prevTab) chrome.tabs.sendMessage(prevTab, { type: "hide_subtitle" }).catch(() => {});
 }
 

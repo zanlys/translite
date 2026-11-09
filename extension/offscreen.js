@@ -3,30 +3,9 @@ const TARGET_SAMPLE_RATE = 16000;
 let audioContext       = null;
 let mediaStream        = null;
 let workletNode        = null;
+let playbackSource     = null;
 let isCapturing        = false;
 let latencyReportTimer = null;
-
-const latencyLog = {
-  captureToSend: [],
-  maxSamples: 50,
-  add(arr, val) {
-    arr.push(val);
-    if (arr.length > this.maxSamples) arr.shift();
-  },
-  p50(arr) {
-    if (!arr.length) return 0;
-    const sorted = [...arr].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length * 0.5)];
-  },
-  p95(arr) {
-    if (!arr.length) return 0;
-    const sorted = [...arr].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length * 0.95)];
-  },
-  report() {
-    console.log(`[Latency] capture->send p50=${this.p50(this.captureToSend).toFixed(1)}ms p95=${this.p95(this.captureToSend).toFixed(1)}ms (n=${this.captureToSend.length})`);
-  }
-};
 
 chrome.runtime.sendMessage({ type: "offscreen_ready" }).catch(() => {});
 
@@ -54,7 +33,7 @@ async function startAudioCapture(streamId) {
     });
 
     const playbackContext = new AudioContext();
-    const playbackSource  = playbackContext.createMediaStreamSource(mediaStream);
+    playbackSource        = playbackContext.createMediaStreamSource(mediaStream);
     playbackSource.connect(playbackContext.destination);
 
     audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
@@ -71,7 +50,7 @@ async function startAudioCapture(streamId) {
     workletNode.port.onmessage = (event) => {
       if (!isCapturing) return;
       if (event.data.type === "chunk") {
-        handleAudioChunk(event.data.samples, event.data.seq, event.data.captureTs);
+        handleAudioChunk(event.data.samples);
       }
     };
 
@@ -80,7 +59,6 @@ async function startAudioCapture(streamId) {
 
     audioContext._playback = playbackContext;
     isCapturing            = true;
-    latencyReportTimer     = setInterval(() => latencyLog.report(), 30000);
 
   } catch (err) {
     console.error("[Offscreen] Gagal:", err);
@@ -91,15 +69,12 @@ async function startAudioCapture(streamId) {
   }
 }
 
-function handleAudioChunk(samples, seq, captureTs) {
+function handleAudioChunk(samples) {
   for (let i = 0; i < samples.length; i++) {
     if (Math.abs(samples[i]) > 0.0001) {
       chrome.runtime.sendMessage({
-        type:      "audio_data",
-        data:      float32ToBase64(samples),
-        seq,
-        captureTs,
-        sendTs:    performance.now(),
+        type: "audio_data",
+        data: float32ToBase64(samples),
       }).catch((err) => {
         if (!err.message?.includes("context invalidated")) {
           console.warn("[Offscreen] Gagal kirim chunk:", err.message);
@@ -114,12 +89,6 @@ function stopAudioCapture() {
   if (!isCapturing) return;
   isCapturing = false;
 
-  if (latencyReportTimer) {
-    clearInterval(latencyReportTimer);
-    latencyReportTimer = null;
-    latencyLog.report();
-  }
-
   if (workletNode) {
     workletNode.disconnect();
     workletNode.port.onmessage = null;
@@ -133,6 +102,10 @@ function stopAudioCapture() {
 
   if (audioContext) {
     if (audioContext._playback) {
+      if (playbackSource) {
+        playbackSource.disconnect();
+        playbackSource = null;
+      }
       audioContext._playback.close().catch(() => {});
       audioContext._playback = null;
     }
@@ -142,10 +115,6 @@ function stopAudioCapture() {
 }
 
 function float32ToBase64(float32Array) {
-  const uint8   = new Uint8Array(float32Array.buffer);
-  let   binary  = "";
-  for (let i = 0; i < uint8.length; i++) {
-    binary += String.fromCharCode(uint8[i]);
-  }
-  return btoa(binary);
+  const uint8 = new Uint8Array(float32Array.buffer);
+  return btoa(String.fromCharCode.apply(null, uint8));
 }

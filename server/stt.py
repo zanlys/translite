@@ -30,6 +30,17 @@ asr = sherpa_onnx.OfflineRecognizer.from_sense_voice(
 
 print("[STT] Model SenseVoice berhasil dimuat.")
 
+_RE_TAG        = re.compile(r"<\|[^|]+\|>")
+_RE_DOTS       = re.compile(r'\.{4,}')
+_RE_COMMAS     = re.compile(r',{2,}')
+_RE_NORMALIZE  = re.compile(r'[\s\-_.,!?~ㅋㅎ하하하하하하]')
+_RE_WHITESPACE = re.compile(r'[\s]')
+_RE_LAUGH_EN   = re.compile(r'^(ha|he|ho|hi|hu|lol|lmao|kek|hah|heh){2,}[!~]*$', re.IGNORECASE)
+_RE_LAUGH_PATTERNS = re.compile(
+    r'^[ㅋ]+$|^[ㅎ]+$|^(하)+$|^(히)+$|^(호)+$|^(헤)+$|^(후)+$|^(크)+$|^(푸)+$'
+)
+_LAUGH_CHARS = set('ㅋㅎ')
+
 
 def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     if not audio_bytes or len(audio_bytes) < 3200:
@@ -45,7 +56,7 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     asr.decode_stream(stream)
 
     result = stream.result.text.strip()
-    result = re.sub(r"<\|[^|]+\|>", "", result).strip()
+    result = _RE_TAG.sub("", result).strip()
 
     if not result:
         return ""
@@ -59,33 +70,25 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
         return ""
 
     result = result.rstrip(",，")
-    result = re.sub(r'\.{4,}', '…', result)
-    result = re.sub(r',{2,}', '', result)
+    result = _RE_DOTS.sub('…', result)
+    result = _RE_COMMAS.sub('', result)
     result = result.strip(" ,.")
 
     if len(result) < 2:
         return ""
 
-    normalized = re.sub(r'[\s\-_.,!?~ㅋㅎ하하하하하하]', '', result.lower())
+    normalized    = _RE_NORMALIZE.sub('', result.lower())
+    stripped_laugh = _RE_WHITESPACE.sub('', result)
 
-    laugh_only_patterns = [
-        r'^[ㅋ]+$', r'^[ㅎ]+$',
-        r'^(하)+$', r'^(히)+$', r'^(호)+$',
-        r'^(헤)+$', r'^(후)+$', r'^(크)+$', r'^(푸)+$',
-    ]
+    if _RE_LAUGH_PATTERNS.fullmatch(stripped_laugh):
+        return ""
 
-    stripped_laugh = re.sub(r'[\s]', '', result)
-    for pattern in laugh_only_patterns:
-        if re.fullmatch(pattern, stripped_laugh):
-            return ""
-
-    laugh_chars = set('ㅋㅎ')
     char_count  = len([c for c in result if c not in (' ', '\n')])
-    laugh_count = len([c for c in result if c in laugh_chars])
+    laugh_count = len([c for c in result if c in _LAUGH_CHARS])
     if char_count > 0 and laugh_count / char_count > 0.7:
         return ""
 
-    if re.fullmatch(r'^(ha|he|ho|hi|hu|lol|lmao|kek|hah|heh){2,}[!~]*$', normalized, re.IGNORECASE):
+    if _RE_LAUGH_EN.fullmatch(normalized):
         return ""
 
     return result
