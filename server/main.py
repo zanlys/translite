@@ -4,6 +4,7 @@ import base64
 import json
 import time
 
+import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -26,15 +27,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SAMPLE_RATE = 16000
-WINDOW_DURATION = 0.8
-STEP_DURATION   = 0.1
+SAMPLE_RATE           = 16000
+FRAME_BYTES           = int(SAMPLE_RATE * 0.1 * 4)
+MAX_UTTERANCE_S       = 6.0
+MAX_UTTERANCE_B       = int(SAMPLE_RATE * MAX_UTTERANCE_S * 4)
+SILENCE_TRIGGER_S     = 0.35
+SILENCE_FRAMES        = int(SILENCE_TRIGGER_S / 0.1)
+SILENCE_RMS_THRESHOLD = 0.003
+MIN_UTTERANCE_B       = int(SAMPLE_RATE * 0.3 * 4)
 
-WINDOW_BYTES = int(SAMPLE_RATE * WINDOW_DURATION * 4)
-STEP_BYTES   = int(SAMPLE_RATE * STEP_DURATION * 4)
 
 class LatencyTracker:
-    """Catat p50/p95 untuk setiap tahap pipeline."""
     def __init__(self, name: str, max_samples: int = 100):
         self.name = name
         self._samples: list[float] = []
@@ -87,15 +90,14 @@ async def websocket_endpoint(ws: WebSocket):
     print("[WS] Klien terhubung.")
 
     audio_buffer        = bytearray()
-    new_bytes_since_last = 0
     last_transcript     = ""
-    stt_seq             = 0    
-    trans_seq           = 0       
-    stt_active          = False   
-
+    stt_seq             = 0
+    trans_seq           = 0
+    stt_active          = False
+    silence_frame_count = 0
+    has_voice_started   = False
     pending_translations: dict[int, str] = {}
-    latest_sent_seq     = -1  
-
+    latest_sent_seq     = -1
     chunk_recv_ts: dict[int, float] = {}
 
     translate_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
@@ -167,7 +169,6 @@ async def websocket_endpoint(ws: WebSocket):
     trans_worker_task = asyncio.create_task(translation_worker())
 
     async def run_stt(pcm: bytes, seq: int, recv_ts: float):
-        """Jalankan STT di executor thread dan push ke antrian terjemahan."""
         nonlocal last_transcript, stt_active
 
         t_start = time.monotonic()
@@ -189,9 +190,9 @@ async def websocket_endpoint(ws: WebSocket):
         if transcript != last_transcript:
             try:
                 await ws.send_text(json.dumps({
-                    "type":    "partial",
-                    "korean":  transcript,
-                    "seq":     seq,
+                    "type":   "partial",
+                    "korean": transcript,
+                    "seq":    seq,
                 }))
             except Exception:
                 pass
@@ -227,26 +228,39 @@ async def websocket_endpoint(ws: WebSocket):
                 if not chunk_b64:
                     continue
 
-                recv_ts = time.monotonic()
-
+                recv_ts     = time.monotonic()
                 chunk_bytes = base64.b64decode(chunk_b64)
-                audio_buffer.extend(chunk_bytes)
-                new_bytes_since_last += len(chunk_bytes)
+                frame_np    = np.frombuffer(chunk_bytes, dtype=np.float32)
+                frame_rms   = float(np.sqrt(np.mean(frame_np ** 2))) if len(frame_np) else 0.0
+                is_voice    = frame_rms > SILENCE_RMS_THRESHOLD
 
-                max_buf = WINDOW_BYTES * 2
-                if len(audio_buffer) > max_buf:
-                    trim = len(audio_buffer) - max_buf
-                    del audio_buffer[:trim]
+                if is_voice:
+                    silence_frame_count = 0
+                    has_voice_started   = True
+                    audio_buffer.extend(chunk_bytes)
+                else:
+                    if has_voice_started:
+                        silence_frame_count += 1
+                        audio_buffer.extend(chunk_bytes)
 
-                if (new_bytes_since_last >= STEP_BYTES
-                        and len(audio_buffer) >= WINDOW_BYTES
-                        and not stt_active):
+                flush_reason = None
+                if has_voice_started and len(audio_buffer) >= MIN_UTTERANCE_B:
+                    if silence_frame_count >= SILENCE_FRAMES:
+                        flush_reason = "silence"
+                    elif len(audio_buffer) >= MAX_UTTERANCE_B:
+                        flush_reason = "max_length"
 
-                    process_bytes = bytes(audio_buffer[-WINDOW_BYTES:])
-                    new_bytes_since_last = 0
+                if flush_reason and not stt_active:
+                    process_bytes = bytes(audio_buffer)
+                    print(f"[VAD] Flush utterance ({flush_reason}), "
+                          f"≈ {len(process_bytes) / (SAMPLE_RATE * 4):.2f}s")
+
+                    audio_buffer.clear()
+                    silence_frame_count = 0
+                    has_voice_started   = False
+
                     stt_active = True
                     stt_seq   += 1
-
                     asyncio.create_task(run_stt(process_bytes, stt_seq, recv_ts))
 
                 if time.monotonic() - report_timer > 60.0:
@@ -254,19 +268,19 @@ async def websocket_endpoint(ws: WebSocket):
                     print(lat_stt.report())
                     print(lat_trans.report())
                     print(lat_e2e.report())
-                    qsize = translate_queue.qsize()
-                    print(f"[Queue] translate_queue size: {qsize}")
+                    print(f"[Queue] translate_queue size: {translate_queue.qsize()}")
 
             elif msg_type == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
 
             elif msg_type == "reset":
                 audio_buffer.clear()
-                new_bytes_since_last = 0
-                last_transcript      = ""
-                stt_active           = False
-                stt_seq              = 0
-                latest_sent_seq      = -1
+                last_transcript     = ""
+                stt_active          = False
+                stt_seq             = 0
+                latest_sent_seq     = -1
+                silence_frame_count = 0
+                has_voice_started   = False
 
                 while not translate_queue.empty():
                     try:

@@ -1,13 +1,9 @@
 class SubtitleProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this._buffer = [];
     this._chunkSamples = 16000 * 0.1;
-
-    this._silenceThreshold = 0.0005;
-    this._consecutiveSilence = 0;
-    this._maxSilenceFrames = 20;
-    this._chunkSeq = 0;
+    this._buffer       = [];
+    this._chunkSeq     = 0;
   }
 
   process(inputs) {
@@ -17,23 +13,8 @@ class SubtitleProcessor extends AudioWorkletProcessor {
     const left  = input[0];
     const right = input[1] || input[0];
 
-    let rms = 0;
     for (let i = 0; i < left.length; i++) {
-      const s = (left[i] + right[i]) * 0.5;
-      rms += s * s;
-      this._buffer.push(s);
-    }
-    rms = Math.sqrt(rms / left.length);
-
-    if (rms < this._silenceThreshold) {
-      this._consecutiveSilence++;
-      if (this._consecutiveSilence > 50) {
-        this._buffer = [];
-        this._consecutiveSilence = 0;
-        return true;
-      }
-    } else {
-      this._consecutiveSilence = 0;
+      this._buffer.push((left[i] + right[i]) * 0.5);
     }
 
     while (this._buffer.length >= this._chunkSamples) {

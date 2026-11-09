@@ -52,15 +52,12 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     if not result:
         return ""
 
-    if len(result) > 150:
-        result = result[:150].rsplit(" ", 1)[0]
-
-    stripped = result.replace(" ", "")
-    if len(stripped) > 10 and len(set(stripped)) <= 3:
+    words = result.split()
+    if len(words) > 4 and len(set(words)) / len(words) < 0.25:
         return ""
 
-    words = result.split()
-    if len(words) > 5 and len(set(words)) / len(words) < 0.25:
+    stripped = result.replace(" ", "")
+    if len(stripped) > 8 and len(set(stripped)) <= 3:
         return ""
 
     result = result.rstrip(",，")
@@ -69,6 +66,35 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     result = result.strip(" ,.")
 
     if len(result) < 2:
+        return ""
+
+    normalized = re.sub(r'[\s\-_.,!?~ㅋㅎ하하하하하하]', '', result.lower())
+
+    laugh_only_patterns = [
+        r'^[ㅋ]+$',
+        r'^[ㅎ]+$',
+        r'^(하)+$',
+        r'^(히)+$',
+        r'^(호)+$',
+        r'^(헤)+$',
+        r'^(후)+$',
+        r'^(크)+$',
+        r'^(푸)+$',
+    ]
+
+    stripped_laugh = re.sub(r'[\s]', '', result)
+    for pattern in laugh_only_patterns:
+        if re.fullmatch(pattern, stripped_laugh):
+            return ""
+
+    laugh_chars = set('ㅋㅎ')
+    char_count  = len([c for c in result if c not in (' ', '\n')])
+    laugh_count = len([c for c in result if c in laugh_chars])
+    if char_count > 0 and laugh_count / char_count > 0.7:
+        return ""
+
+    laugh_en_pattern = r'^(ha|he|ho|hi|hu|lol|lmao|kek|hah|heh){2,}[!~]*$'
+    if re.fullmatch(laugh_en_pattern, normalized, re.IGNORECASE):
         return ""
 
     return result
