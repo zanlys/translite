@@ -9,7 +9,6 @@ echo           Translite Server
 echo ==========================================
 echo.
 
-rem ── cek Python ──────────────────────────────────────────────────────────────
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [!] Python tidak ditemukan.
@@ -20,7 +19,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem ── setup venv ──────────────────────────────────────────────────────────────
 if not exist venv (
     echo [*] Membuat virtual environment...
     python -m venv venv
@@ -39,7 +37,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem ── install dependencies ─────────────────────────────────────────────────────
 python -c "import fastapi, uvicorn, sherpa_onnx, httpx" >nul 2>&1
 if errorlevel 1 (
     echo [*] Menginstall dependencies, mohon tunggu...
@@ -56,7 +53,6 @@ if errorlevel 1 (
     echo [*] Dependencies sudah lengkap.
 )
 
-rem ── download model kalau belum ada ───────────────────────────────────────────
 set MODEL_DIR=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
 set MODEL_FILE=%MODEL_DIR%\model.int8.onnx
 
@@ -83,7 +79,6 @@ if not exist "%MODEL_FILE%" (
     echo [*] Model berhasil diunduh dan siap digunakan.
 )
 
-rem ── buat config.json default kalau belum ada ─────────────────────────────────
 if not exist config.json (
     echo [*] Membuat config.json dengan nilai default...
     python setup_config.py
@@ -94,7 +89,6 @@ if not exist config.json (
     )
 )
 
-rem ── cek API key ──────────────────────────────────────────────────────────────
 python -c "import json,sys; c=json.load(open('config.json')); sys.exit(0 if c.get('deepl',{}).get('api_key','') else 1)" >nul 2>&1
 if errorlevel 1 (
     echo.
@@ -102,10 +96,6 @@ if errorlevel 1 (
     echo [!] Silakan masuk ke menu Settings untuk mengisinya.
     echo.
 )
-
-rem ══════════════════════════════════════════════════════════════════════════════
-rem  MAIN MENU
-rem ══════════════════════════════════════════════════════════════════════════════
 
 :MAIN_MENU
 echo.
@@ -123,7 +113,6 @@ echo.
 echo   [!] Pilihan tidak valid, coba lagi.
 goto MAIN_MENU
 
-rem ── start server ─────────────────────────────────────────────────────────────
 :START_SERVER
 echo.
 echo [*] Memulai Translite Server...
@@ -135,7 +124,6 @@ echo [*] Server berhenti. Tekan sembarang tombol untuk kembali ke menu.
 pause >nul
 goto MAIN_MENU
 
-rem ── open settings ────────────────────────────────────────────────────────────
 :OPEN_SETTINGS
 python settings.py
 goto MAIN_MENU
