@@ -1,14 +1,14 @@
 const WS_URL        = "ws://localhost:8765/ws";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
-let ws = null;
-let captureTabId = null;
-let isCapturing = false;
+let ws                  = null;
+let captureTabId        = null;
+let isCapturing         = false;
 let activeSubtitleTabId = null;
-let reconnectTimer = null;
-
-let latestSubtitleSeq = -1;
-let latestPartialSeq  = -1;
+let reconnectTimer      = null;
+let latestSubtitleSeq   = -1;
+let latestPartialSeq    = -1;
+let latencyMs           = 0;
 
 function connectWebSocket() {
   return new Promise((resolve, reject) => {
@@ -64,11 +64,9 @@ function connectWebSocket() {
             return;
           }
           latestSubtitleSeq = seq;
+          latencyMs = data.latency_ms;
 
-          chrome.runtime.sendMessage({
-            type: "latency_update",
-            ms:   data.latency_ms,
-          }).catch(() => {});
+          chrome.storage.local.set({ latencyMs: data.latency_ms }).catch(() => {});
 
           if (activeSubtitleTabId) {
             chrome.tabs.sendMessage(activeSubtitleTabId, {
@@ -110,10 +108,10 @@ function broadcastToContent(message) {
   }
 }
 
-function injectSubtitleLangsung(tabId, korean, indonesian, latencyMs) {
+function injectSubtitleLangsung(tabId, korean, indonesian, latMs) {
   const kor = (korean     || "").replace(/\\/g, "\\\\").replace(/`/g, "'");
   const ind = (indonesian || "").replace(/\\/g, "\\\\").replace(/`/g, "'");
-  const lat = latencyMs || 0;
+  const lat = latMs || 0;
 
   chrome.scripting.executeScript({
     target: { tabId },
@@ -140,7 +138,7 @@ function injectSubtitleLangsung(tabId, korean, indonesian, latencyMs) {
       const ptEl = document.getElementById("ws-subtitle-partial");
       if (ptEl) { ptEl.textContent = ""; ptEl.style.display = "none"; }
       if (idEl) { idEl.textContent = ind; idEl.style.display = ind ? "block" : "none"; }
-      if (stEl) stEl.textContent = lat ? `⚡ ${lat}ms` : "";
+      if (stEl) stEl.textContent = "";
       overlay.style.opacity = "1";
       if (window.__wsHideTimer) clearTimeout(window.__wsHideTimer);
       window.__wsHideTimer = setTimeout(() => { overlay.style.opacity = "0"; }, 5000);
@@ -150,13 +148,19 @@ function injectSubtitleLangsung(tabId, korean, indonesian, latencyMs) {
 }
 
 async function ensureOffscreenDocument() {
-  await chrome.offscreen.closeDocument().catch(() => {});
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+  }).catch(() => []);
+
+  if (existingContexts.length > 0) {
+    return;
+  }
+
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_URL,
     reasons: ["USER_MEDIA"],
     justification: "Capture audio tab untuk subtitle real time",
   });
-  await new Promise(resolve => setTimeout(resolve, 800));
 }
 
 async function closeOffscreenDocument() {
@@ -168,9 +172,8 @@ async function startCapture(tabId) {
 
   try {
     activeSubtitleTabId = tabId;
-
-    latestSubtitleSeq = -1;
-    latestPartialSeq  = -1;
+    latestSubtitleSeq   = -1;
+    latestPartialSeq    = -1;
 
     const streamId = await new Promise((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
@@ -193,7 +196,7 @@ async function startCapture(tabId) {
     console.error("[BG] startCapture error:", err.message);
     broadcastToContent({ type: "capture_error", message: err.message });
     await chrome.offscreen.closeDocument().catch(() => {});
-    isCapturing = false;
+    isCapturing         = false;
     activeSubtitleTabId = null;
     return { success: false, error: err.message };
   }
@@ -212,12 +215,12 @@ async function stopCapture() {
 
   await closeOffscreenDocument();
 
-  const prevTab = activeSubtitleTabId;
-  isCapturing = false;
-  captureTabId = null;
+  const prevTab       = activeSubtitleTabId;
+  isCapturing         = false;
+  captureTabId        = null;
   activeSubtitleTabId = null;
-  latestSubtitleSeq = -1;
-  latestPartialSeq  = -1;
+  latestSubtitleSeq   = -1;
+  latestPartialSeq    = -1;
   await chrome.storage.local.set({ isCapturing: false, captureTabId: null });
 
   if (prevTab) chrome.tabs.sendMessage(prevTab, { type: "hide_subtitle" }).catch(() => {});
@@ -237,7 +240,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return true;
 
     case "get_status":
-      sendResponse({ isCapturing, captureTabId });
+      sendResponse({ isCapturing, captureTabId, latencyMs });
       return false;
 
     case "audio_data":

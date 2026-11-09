@@ -1,4 +1,5 @@
 import os
+from collections import OrderedDict
 import httpx
 from dotenv import load_dotenv
 
@@ -12,8 +13,7 @@ BASE_URL      = (
     "https://api.deepl.com/v2/translate"
 )
 
-_cache:       dict[str, str] = {}
-_cache_order: list[str]      = []
+_cache: OrderedDict[str, str] = OrderedDict()
 CACHE_MAX = 500
 
 _client: httpx.AsyncClient | None = None
@@ -27,19 +27,17 @@ def _get_client() -> httpx.AsyncClient:
             max_connections=10,
             keepalive_expiry=30,
         )
-
         _client = httpx.AsyncClient(timeout=3.0, limits=limits)
     return _client
 
 
 def _cache_put(key: str, value: str):
     if key in _cache:
-        _cache_order.remove(key)
-    elif len(_cache) >= CACHE_MAX:
-        oldest = _cache_order.pop(0)
-        del _cache[oldest]
-    _cache[key] = value
-    _cache_order.append(key)
+        _cache.move_to_end(key)
+    else:
+        if len(_cache) >= CACHE_MAX:
+            _cache.popitem(last=False)
+        _cache[key] = value
 
 
 async def translate_ko_to_id(text: str) -> str:
@@ -50,6 +48,7 @@ async def translate_ko_to_id(text: str) -> str:
         return text
 
     if text in _cache:
+        _cache.move_to_end(text)
         return _cache[text]
 
     try:

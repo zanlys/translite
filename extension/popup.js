@@ -1,7 +1,7 @@
-const toggleBtn = document.getElementById("toggleBtn");
-const statusDot = document.getElementById("statusDot");
-const statusText = document.getElementById("statusText");
-const latencyBadge = document.getElementById("latencyBadge");
+const toggleBtn           = document.getElementById("toggleBtn");
+const statusDot           = document.getElementById("statusDot");
+const statusText          = document.getElementById("statusText");
+const latencyBadge        = document.getElementById("latencyBadge");
 const notSupportedWarning = document.getElementById("notSupportedWarning");
 
 let isCapturing = false;
@@ -10,7 +10,11 @@ async function init() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
   const url = tab?.url ?? "";
-  const isRestricted = !url || url.startsWith("chrome://") || url.startsWith("edge://") || url.startsWith("about:") || url.startsWith("chrome-extension://");
+  const isRestricted = !url
+    || url.startsWith("chrome://")
+    || url.startsWith("edge://")
+    || url.startsWith("about:")
+    || url.startsWith("chrome-extension://");
 
   if (isRestricted) {
     notSupportedWarning.classList.add("show");
@@ -19,8 +23,13 @@ async function init() {
     return;
   }
 
-  const result = await chrome.storage.local.get(["isCapturing", "captureTabId"]);
+  const result = await chrome.storage.local.get(["isCapturing", "captureTabId", "latencyMs"]);
   isCapturing  = !!(result.isCapturing && result.captureTabId === tab.id);
+
+  if (isCapturing && result.latencyMs) {
+    latencyBadge.textContent = `${result.latencyMs}ms`;
+    latencyBadge.classList.add("show");
+  }
 
   toggleBtn.disabled = false;
   updateUI();
@@ -83,9 +92,9 @@ toggleBtn.addEventListener("click", async () => {
   updateUI();
 });
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "latency_update" && isCapturing) {
-    latencyBadge.textContent = `⚡ ${message.ms}ms`;
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.latencyMs && isCapturing) {
+    latencyBadge.textContent = `${changes.latencyMs.newValue}ms`;
     latencyBadge.classList.add("show");
   }
 });

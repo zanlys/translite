@@ -1,9 +1,9 @@
 const TARGET_SAMPLE_RATE = 16000;
 
-let audioContext = null;
-let mediaStream = null;
-let workletNode = null;
-let isCapturing = false;
+let audioContext    = null;
+let mediaStream     = null;
+let workletNode     = null;
+let isCapturing     = false;
 
 const latencyLog = {
   captureToSend: [],
@@ -14,12 +14,12 @@ const latencyLog = {
   },
   p50(arr) {
     if (!arr.length) return 0;
-    const sorted = [...arr].sort((a,b) => a-b);
+    const sorted = [...arr].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length * 0.5)];
   },
   p95(arr) {
     if (!arr.length) return 0;
-    const sorted = [...arr].sort((a,b) => a-b);
+    const sorted = [...arr].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length * 0.95)];
   },
   report() {
@@ -156,11 +156,10 @@ function stopAudioCapture() {
 }
 
 function float32ToBase64(float32Array) {
-  const uint8     = new Uint8Array(float32Array.buffer);
-  let   binary    = "";
-  const chunkSize = 8192;
-  for (let i = 0; i < uint8.length; i += chunkSize) {
-    binary += String.fromCharCode(...uint8.subarray(i, i + chunkSize));
+  const uint8 = new Uint8Array(float32Array.buffer);
+  let binary = "";
+  for (let i = 0; i < uint8.length; i++) {
+    binary += String.fromCharCode(uint8[i]);
   }
   return btoa(binary);
 }

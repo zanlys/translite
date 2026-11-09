@@ -70,7 +70,7 @@
     }
     if (partialEl) {
       partialEl.style.cssText = `
-        display: none; font-size: 18px; font-weight: 400;
+        display: none; font-size: 16px; font-weight: 400;
         color: #e8e8e8; font-family: 'Segoe UI', sans-serif;
         font-style: italic; opacity: 0.85;
         text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
@@ -94,9 +94,9 @@
     if (!korean) return;
 
     if (partialEl) {
-      partialEl.textContent   = "…";
+      partialEl.textContent   = korean;
       partialEl.style.display = "block";
-      partialEl.style.opacity = "0.7";
+      partialEl.style.opacity = "0.8";
     }
     if (overlayEl) overlayEl.style.opacity = "1";
 
@@ -132,7 +132,7 @@
       koreanEl.textContent   = "";
       koreanEl.style.display = "none";
     }
-    if (statusEl) statusEl.textContent = latencyMs ? `⚡ ${latencyMs}ms` : "";
+    if (statusEl) statusEl.textContent = "";
 
     if (overlayEl) overlayEl.style.opacity = "1";
     if (hideTimer) clearTimeout(hideTimer);

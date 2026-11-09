@@ -1,6 +1,7 @@
 class SubtitleProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
+
     this._chunkSamples = 16000 * 0.1;
     this._buffer       = [];
     this._chunkSeq     = 0;

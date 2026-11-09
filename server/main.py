@@ -3,6 +3,8 @@ import asyncio
 import base64
 import json
 import time
+from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -18,7 +20,26 @@ load_dotenv()
 HOST = os.getenv("SERVER_HOST", "localhost")
 PORT = int(os.getenv("SERVER_PORT", "8765"))
 
-app = FastAPI(title="Translite Server")
+SAMPLE_RATE            = 16000
+FRAME_BYTES            = int(SAMPLE_RATE * 0.1 * 4)
+MAX_UTTERANCE_S        = 6.0
+MAX_UTTERANCE_B        = int(SAMPLE_RATE * MAX_UTTERANCE_S * 4)
+SILENCE_TRIGGER_S      = 0.20
+SILENCE_FRAMES         = int(SILENCE_TRIGGER_S / 0.1)
+SILENCE_RMS_THRESHOLD  = 0.003
+MIN_UTTERANCE_B        = int(SAMPLE_RATE * 0.3 * 4)
+MAX_SILENCE_BUF_FRAMES = SILENCE_FRAMES + 2
+
+STT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stt")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    STT_EXECUTOR.shutdown(wait=False)
+
+
+app = FastAPI(title="Translite Server", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,15 +47,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-SAMPLE_RATE           = 16000
-FRAME_BYTES           = int(SAMPLE_RATE * 0.1 * 4)
-MAX_UTTERANCE_S       = 6.0
-MAX_UTTERANCE_B       = int(SAMPLE_RATE * MAX_UTTERANCE_S * 4)
-SILENCE_TRIGGER_S     = 0.35
-SILENCE_FRAMES        = int(SILENCE_TRIGGER_S / 0.1)
-SILENCE_RMS_THRESHOLD = 0.003
-MIN_UTTERANCE_B       = int(SAMPLE_RATE * 0.3 * 4)
 
 
 class LatencyTracker:
@@ -93,12 +105,12 @@ async def websocket_endpoint(ws: WebSocket):
     last_transcript     = ""
     stt_seq             = 0
     trans_seq           = 0
-    stt_active          = False
+    stt_active_count    = 0
+    stt_lock            = asyncio.Lock()
     silence_frame_count = 0
     has_voice_started   = False
-    pending_translations: dict[int, str] = {}
+    utterance_start_ts  = 0.0
     latest_sent_seq     = -1
-    chunk_recv_ts: dict[int, float] = {}
 
     translate_queue: asyncio.Queue = asyncio.Queue(maxsize=5)
 
@@ -113,24 +125,21 @@ async def websocket_endpoint(ws: WebSocket):
             if item is None:
                 break
 
-            seq, transcript, recv_ts = item
+            seq, transcript, start_ts = item
 
-            if not translate_queue.empty():
-                try:
-                    peek_seq = translate_queue._queue[0][0]
-                    if peek_seq > seq + 2:
-                        print(f"[Trans] Skip seq {seq}, ada seq {peek_seq} lebih baru")
-                        translate_queue.task_done()
-                        continue
-                except (IndexError, AttributeError):
-                    pass
+            try:
+                peek_seq = translate_queue._queue[0][0]
+                if not translate_queue.empty() and peek_seq > seq + 2:
+                    print(f"[Trans] Skip seq {seq}, ada seq {peek_seq} lebih baru")
+                    continue
+            except (IndexError, AttributeError):
+                pass
 
             t_start = time.monotonic()
             try:
                 translation = await translate_ko_to_id(transcript)
             except Exception as e:
                 print(f"[Trans] Error seq {seq}: {e}")
-                translate_queue.task_done()
                 continue
             finally:
                 translate_queue.task_done()
@@ -144,13 +153,10 @@ async def websocket_endpoint(ws: WebSocket):
 
             latest_sent_seq = seq
 
-            if recv_ts > 0:
-                e2e_ms = (time.monotonic() - recv_ts) * 1000
-                lat_e2e.record(e2e_ms)
-            else:
-                e2e_ms = 0
-
+            e2e_ms   = (time.monotonic() - start_ts) * 1000 if start_ts > 0 else 0
             total_ms = round(e2e_ms)
+            lat_e2e.record(e2e_ms)
+
             print(f"[Trans {t_trans_ms:.0f}ms | E2E {total_ms}ms] seq={seq}")
             print(f"  KO: {transcript}")
             print(f"  ID: {translation}")
@@ -168,18 +174,19 @@ async def websocket_endpoint(ws: WebSocket):
 
     trans_worker_task = asyncio.create_task(translation_worker())
 
-    async def run_stt(pcm: bytes, seq: int, recv_ts: float):
-        nonlocal last_transcript, stt_active
+    async def run_stt(pcm: bytes, seq: int, start_ts: float):
+        nonlocal last_transcript, stt_active_count
 
         t_start = time.monotonic()
         try:
             loop       = asyncio.get_running_loop()
-            transcript = await loop.run_in_executor(None, transcribe_audio, pcm, SAMPLE_RATE)
+            transcript = await loop.run_in_executor(STT_EXECUTOR, transcribe_audio, pcm, SAMPLE_RATE)
         except Exception as e:
             print(f"[STT] Error seq {seq}: {e}")
             return
         finally:
-            stt_active = False
+            async with stt_lock:
+                stt_active_count -= 1
 
         t_stt_ms = (time.monotonic() - t_start) * 1000
         lat_stt.record(t_stt_ms)
@@ -198,11 +205,10 @@ async def websocket_endpoint(ws: WebSocket):
                 pass
 
         last_transcript = transcript
-
         print(f"[STT {t_stt_ms:.0f}ms] seq={seq} KO: {transcript}")
 
         try:
-            translate_queue.put_nowait((seq, transcript, recv_ts))
+            translate_queue.put_nowait((seq, transcript, start_ts))
         except asyncio.QueueFull:
             try:
                 old = translate_queue.get_nowait()
@@ -211,7 +217,7 @@ async def websocket_endpoint(ws: WebSocket):
             except asyncio.QueueEmpty:
                 pass
             try:
-                translate_queue.put_nowait((seq, transcript, recv_ts))
+                translate_queue.put_nowait((seq, transcript, start_ts))
             except asyncio.QueueFull:
                 print(f"[Queue] Gagal masukkan seq={seq}, skip")
 
@@ -228,20 +234,24 @@ async def websocket_endpoint(ws: WebSocket):
                 if not chunk_b64:
                     continue
 
-                recv_ts     = time.monotonic()
                 chunk_bytes = base64.b64decode(chunk_b64)
                 frame_np    = np.frombuffer(chunk_bytes, dtype=np.float32)
                 frame_rms   = float(np.sqrt(np.mean(frame_np ** 2))) if len(frame_np) else 0.0
                 is_voice    = frame_rms > SILENCE_RMS_THRESHOLD
 
                 if is_voice:
+                    if not has_voice_started:
+                        utterance_start_ts = time.monotonic()
                     silence_frame_count = 0
                     has_voice_started   = True
                     audio_buffer.extend(chunk_bytes)
                 else:
                     if has_voice_started:
-                        silence_frame_count += 1
-                        audio_buffer.extend(chunk_bytes)
+                        if silence_frame_count < MAX_SILENCE_BUF_FRAMES:
+                            silence_frame_count += 1
+                            audio_buffer.extend(chunk_bytes)
+                        else:
+                            silence_frame_count += 1
 
                 flush_reason = None
                 if has_voice_started and len(audio_buffer) >= MIN_UTTERANCE_B:
@@ -250,18 +260,23 @@ async def websocket_endpoint(ws: WebSocket):
                     elif len(audio_buffer) >= MAX_UTTERANCE_B:
                         flush_reason = "max_length"
 
-                if flush_reason and not stt_active:
-                    process_bytes = bytes(audio_buffer)
-                    print(f"[VAD] Flush utterance ({flush_reason}), "
-                          f"≈ {len(process_bytes) / (SAMPLE_RATE * 4):.2f}s")
+                if flush_reason:
+                    async with stt_lock:
+                        can_flush = stt_active_count < 2
+                        if can_flush:
+                            stt_active_count += 1
 
-                    audio_buffer.clear()
-                    silence_frame_count = 0
-                    has_voice_started   = False
+                    if can_flush:
+                        process_bytes = bytes(audio_buffer)
+                        print(f"[VAD] Flush utterance ({flush_reason}), "
+                              f"≈ {len(process_bytes) / (SAMPLE_RATE * 4):.2f}s")
 
-                    stt_active = True
-                    stt_seq   += 1
-                    asyncio.create_task(run_stt(process_bytes, stt_seq, recv_ts))
+                        audio_buffer.clear()
+                        silence_frame_count = 0
+                        has_voice_started   = False
+
+                        stt_seq += 1
+                        asyncio.create_task(run_stt(process_bytes, stt_seq, utterance_start_ts))
 
                 if time.monotonic() - report_timer > 60.0:
                     report_timer = time.monotonic()
@@ -276,11 +291,13 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "reset":
                 audio_buffer.clear()
                 last_transcript     = ""
-                stt_active          = False
+                async with stt_lock:
+                    stt_active_count = 0
                 stt_seq             = 0
                 latest_sent_seq     = -1
                 silence_frame_count = 0
                 has_voice_started   = False
+                utterance_start_ts  = 0.0
 
                 while not translate_queue.empty():
                     try:
