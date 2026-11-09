@@ -1,77 +1,71 @@
 @echo off
+chcp 65001 >nul
 setlocal
-echo ================================
-echo       Translite Server
-echo ================================
-echo.
-
 cd /d "%~dp0"
 
-if not exist .env (
-    echo [*] File .env belum ada, membuat dari template...
-    copy .env.example .env >nul
-    echo.
-    echo [!] Buka file server\.env dan isi DEEPL_API_KEY kamu.
-    echo [!] Setelah diisi, jalankan start.bat lagi.
-    echo.
-    pause
-    exit /b 1
-)
+echo.
+echo ==========================================
+echo           Translite Server
+echo ==========================================
+echo.
 
-findstr /r "DEEPL_API_KEY=.\+" .env >nul 2>&1
+rem ── cek Python ──────────────────────────────────────────────────────────────
+python --version >nul 2>&1
 if errorlevel 1 (
-    echo [!] DEEPL_API_KEY di file .env belum diisi!
-    echo [!] Buka server\.env dan isi API key kamu.
+    echo [!] Python tidak ditemukan.
+    echo [!] Install Python 3.9+ dari https://python.org
+    echo [!] Pastikan centang "Add Python to PATH" saat install.
     echo.
     pause
     exit /b 1
 )
 
+rem ── setup venv ──────────────────────────────────────────────────────────────
 if not exist venv (
     echo [*] Membuat virtual environment...
     python -m venv venv
     if errorlevel 1 (
-        echo [!] Gagal membuat venv. Pastikan Python 3.9+ sudah terinstall.
+        echo [!] Gagal membuat venv.
         pause
         exit /b 1
     )
+    echo [*] Virtual environment berhasil dibuat.
 )
 
 call venv\Scripts\activate.bat
+if errorlevel 1 (
+    echo [!] Gagal aktivasi venv. Coba hapus folder venv dan jalankan lagi.
+    pause
+    exit /b 1
+)
 
-python -c "import fastapi, uvicorn, sherpa_onnx, dotenv, httpx" >nul 2>&1
+rem ── install dependencies ─────────────────────────────────────────────────────
+python -c "import fastapi, uvicorn, sherpa_onnx, httpx" >nul 2>&1
 if errorlevel 1 (
     echo [*] Menginstall dependencies, mohon tunggu...
-    pip install -r requirements.txt --quiet
+    pip install -r requirements.txt
     if errorlevel 1 (
+        echo.
         echo [!] Gagal install dependencies.
+        echo [!] Pastikan koneksi internet aktif lalu coba lagi.
         pause
         exit /b 1
     )
     echo [*] Dependencies berhasil diinstall.
 ) else (
-    echo [*] Dependencies sudah terinstall.
+    echo [*] Dependencies sudah lengkap.
 )
 
+rem ── download model kalau belum ada ───────────────────────────────────────────
 set MODEL_DIR=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17
 set MODEL_FILE=%MODEL_DIR%\model.int8.onnx
 
 if not exist "%MODEL_FILE%" (
     echo.
-    echo [*] Model SenseVoice belum ada.
-    echo [*] Mengunduh model ^(~155MB^), mohon tunggu...
+    echo [*] Model SenseVoice belum ada, mengunduh sekitar 155MB...
     echo [*] Jangan tutup window ini.
     echo.
-    python -c ^
-        "import urllib.request, sys; ^
-         url = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2'; ^
-         def progress(count, block, total): ^
-             pct = min(int(count*block*100/total), 100); ^
-             bar = '#'*(pct//5) + '-'*(20-pct//5); ^
-             sys.stdout.write(f'\r  [{bar}] {pct}%%'); sys.stdout.flush() ^
-         ; ^
-         urllib.request.urlretrieve(url, 'model.tar.bz2', reporthook=progress); ^
-         print()"
+    python -c "import urllib.request, sys; url='https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2'; prog=lambda c,b,t: (sys.stdout.write('\r  [%-20s] %d%%' % ('#'*min(int(c*b*100/t),100)//5, min(int(c*b*100/t),100))), sys.stdout.flush()); urllib.request.urlretrieve(url,'model.tar.bz2',reporthook=prog); print()"
     if errorlevel 1 (
         echo.
         echo [!] Gagal mengunduh model. Cek koneksi internet dan coba lagi.
@@ -86,13 +80,68 @@ if not exist "%MODEL_FILE%" (
         pause
         exit /b 1
     )
-    echo [*] Model berhasil diunduh dan diekstrak.
+    echo [*] Model berhasil diunduh dan siap digunakan.
 )
 
+rem ── buat config.json default kalau belum ada ─────────────────────────────────
+if not exist config.json (
+    echo [*] Membuat config.json dengan nilai default...
+    python setup_config.py
+    if errorlevel 1 (
+        echo [!] Gagal membuat config.json.
+        pause
+        exit /b 1
+    )
+)
+
+rem ── cek API key ──────────────────────────────────────────────────────────────
+python -c "import json,sys; c=json.load(open('config.json')); sys.exit(0 if c.get('deepl',{}).get('api_key','') else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [!] DeepL API Key belum diisi.
+    echo [!] Silakan masuk ke menu Settings untuk mengisinya.
+    echo.
+)
+
+rem ══════════════════════════════════════════════════════════════════════════════
+rem  MAIN MENU
+rem ══════════════════════════════════════════════════════════════════════════════
+
+:MAIN_MENU
 echo.
-echo [*] Memulai server di ws://localhost:8765
-echo [*] Tekan Ctrl+C untuk berhenti
+echo   1. Start Server
+echo   2. Settings
+echo   0. Keluar
+echo.
+set "CHOICE="
+set /p CHOICE="  Pilih (1/2/0): "
+
+if "%CHOICE%"=="1" goto START_SERVER
+if "%CHOICE%"=="2" goto OPEN_SETTINGS
+if "%CHOICE%"=="0" goto END
+echo.
+echo   [!] Pilihan tidak valid, coba lagi.
+goto MAIN_MENU
+
+rem ── start server ─────────────────────────────────────────────────────────────
+:START_SERVER
+echo.
+echo [*] Memulai Translite Server...
+echo [*] Tekan Ctrl+C untuk berhenti.
 echo.
 python main.py
+echo.
+echo [*] Server berhenti. Tekan sembarang tombol untuk kembali ke menu.
+pause >nul
+goto MAIN_MENU
 
-pause
+rem ── open settings ────────────────────────────────────────────────────────────
+:OPEN_SETTINGS
+python settings.py
+goto MAIN_MENU
+
+:END
+echo.
+echo   Sampai jumpa!
+echo.
+endlocal

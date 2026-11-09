@@ -2,29 +2,27 @@ import os
 import re
 import numpy as np
 import sherpa_onnx
-from dotenv import load_dotenv
 
-load_dotenv()
+from config_loader import get_config
 
-MODEL_DIR = os.getenv(
-    "SENSEVOICE_MODEL_DIR",
-    os.path.join(os.path.dirname(__file__),
-                 "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17")
-)
+_cfg     = get_config()
+_stt_cfg = _cfg["stt"]
 
+MODEL_DIR   = os.path.join(os.path.dirname(__file__), "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17")
 MODEL_PATH  = os.path.join(MODEL_DIR, "model.int8.onnx")
 TOKENS_PATH = os.path.join(MODEL_DIR, "tokens.txt")
 
 print(f"[STT] Memuat SenseVoice Small int8...")
-print(f"[STT]   model : {MODEL_PATH}")
-print(f"[STT]   tokens: {TOKENS_PATH}")
+print(f"[STT]   model      : {MODEL_PATH}")
+print(f"[STT]   tokens     : {TOKENS_PATH}")
+print(f"[STT]   num_threads: {_stt_cfg['num_threads']}")
 
 asr = sherpa_onnx.OfflineRecognizer.from_sense_voice(
     model=MODEL_PATH,
     tokens=TOKENS_PATH,
     language="ko",
-    use_itn=False,
-    num_threads=2,
+    use_itn=_stt_cfg["use_itn"],
+    num_threads=_stt_cfg["num_threads"],
     decoding_method="greedy_search",
     debug=False,
     provider="cpu",
@@ -71,15 +69,9 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     normalized = re.sub(r'[\s\-_.,!?~ㅋㅎ하하하하하하]', '', result.lower())
 
     laugh_only_patterns = [
-        r'^[ㅋ]+$',
-        r'^[ㅎ]+$',
-        r'^(하)+$',
-        r'^(히)+$',
-        r'^(호)+$',
-        r'^(헤)+$',
-        r'^(후)+$',
-        r'^(크)+$',
-        r'^(푸)+$',
+        r'^[ㅋ]+$', r'^[ㅎ]+$',
+        r'^(하)+$', r'^(히)+$', r'^(호)+$',
+        r'^(헤)+$', r'^(후)+$', r'^(크)+$', r'^(푸)+$',
     ]
 
     stripped_laugh = re.sub(r'[\s]', '', result)
@@ -93,17 +85,16 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     if char_count > 0 and laugh_count / char_count > 0.7:
         return ""
 
-    laugh_en_pattern = r'^(ha|he|ho|hi|hu|lol|lmao|kek|hah|heh){2,}[!~]*$'
-    if re.fullmatch(laugh_en_pattern, normalized, re.IGNORECASE):
+    if re.fullmatch(r'^(ha|he|ho|hi|hu|lol|lmao|kek|hah|heh){2,}[!~]*$', normalized, re.IGNORECASE):
         return ""
 
     return result
 
 
 def _resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-    duration = len(audio) / orig_sr
+    duration   = len(audio) / orig_sr
     target_len = int(duration * target_sr)
-    resampled = np.interp(
+    resampled  = np.interp(
         np.linspace(0, len(audio) - 1, target_len),
         np.arange(len(audio)),
         audio,

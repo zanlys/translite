@@ -1,6 +1,7 @@
 server/venv/
-
+.vscode
 server/.env
+server/config.json
 
 server/__pycache__/
 server/*.pyc

@@ -10,27 +10,27 @@ import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from dotenv import load_dotenv
 
+from config_loader import get_config
 from stt import transcribe_audio
 from translate import translate_ko_to_id
 
-load_dotenv()
+_cfg = get_config()
 
 HOST = os.getenv("SERVER_HOST", "localhost")
 PORT = int(os.getenv("SERVER_PORT", "8765"))
 
 SAMPLE_RATE            = 16000
 FRAME_BYTES            = int(SAMPLE_RATE * 0.1 * 4)
-MAX_UTTERANCE_S        = 6.0
+MAX_UTTERANCE_S        = _cfg["vad"]["max_utterance_seconds"]
 MAX_UTTERANCE_B        = int(SAMPLE_RATE * MAX_UTTERANCE_S * 4)
-SILENCE_TRIGGER_S      = 0.20
+SILENCE_TRIGGER_S      = _cfg["vad"]["silence_trigger_seconds"]
 SILENCE_FRAMES         = int(SILENCE_TRIGGER_S / 0.1)
-SILENCE_RMS_THRESHOLD  = 0.003
-MIN_UTTERANCE_B        = int(SAMPLE_RATE * 0.3 * 4)
-MAX_SILENCE_BUF_FRAMES = SILENCE_FRAMES + 2
+SILENCE_RMS_THRESHOLD  = _cfg["vad"]["silence_rms_threshold"]
+MIN_UTTERANCE_B        = int(SAMPLE_RATE * _cfg["vad"]["min_utterance_seconds"] * 4)
+MAX_SILENCE_BUF_FRAMES = SILENCE_FRAMES + _cfg["vad"]["max_silence_buffer_extra"]
 
-STT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stt")
+STT_EXECUTOR = ThreadPoolExecutor(max_workers=_cfg["stt"]["num_threads"], thread_name_prefix="stt")
 
 
 @asynccontextmanager

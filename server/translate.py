@@ -1,21 +1,23 @@
 import os
 from collections import OrderedDict
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
+from config_loader import get_config
 
-DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "")
-IS_FREE       = os.getenv("DEEPL_FREE", "true").lower() == "true"
+_cfg = get_config()
+_deepl_cfg = _cfg["deepl"]
+
+DEEPL_API_KEY = _deepl_cfg["api_key"]
+IS_FREE       = _deepl_cfg["free_tier"]
 BASE_URL      = (
     "https://api-free.deepl.com/v2/translate"
     if IS_FREE else
     "https://api.deepl.com/v2/translate"
 )
+_TIMEOUT      = _deepl_cfg["timeout_seconds"]
+CACHE_MAX     = _cfg["translate"]["cache_size"]
 
 _cache: OrderedDict[str, str] = OrderedDict()
-CACHE_MAX = 500
-
 _client: httpx.AsyncClient | None = None
 
 
@@ -27,7 +29,7 @@ def _get_client() -> httpx.AsyncClient:
             max_connections=10,
             keepalive_expiry=30,
         )
-        _client = httpx.AsyncClient(timeout=3.0, limits=limits)
+        _client = httpx.AsyncClient(timeout=_TIMEOUT, limits=limits)
     return _client
 
 

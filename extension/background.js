@@ -48,33 +48,26 @@ function connectWebSocket() {
           const seq = data.seq ?? 0;
           if (seq < latestPartialSeq) return;
           latestPartialSeq = seq;
-
           if (activeSubtitleTabId) {
             chrome.tabs.sendMessage(activeSubtitleTabId, {
               type:   "show_partial",
               korean: data.korean,
-              seq:    seq,
+              seq,
             }).catch(() => {});
           }
-
         } else if (data.type === "subtitle") {
           const seq = data.seq ?? 0;
-          if (seq <= latestSubtitleSeq) {
-            console.log(`[BG] Drop subtitle lama seq=${seq} (latest=${latestSubtitleSeq})`);
-            return;
-          }
+          if (seq <= latestSubtitleSeq) return;
           latestSubtitleSeq = seq;
           latencyMs = data.latency_ms;
-
           chrome.storage.local.set({ latencyMs: data.latency_ms }).catch(() => {});
-
           if (activeSubtitleTabId) {
             chrome.tabs.sendMessage(activeSubtitleTabId, {
               type:       "show_subtitle",
               korean:     data.korean,
               indonesian: data.indonesian,
               latency_ms: data.latency_ms,
-              seq:        seq,
+              seq,
             }).catch(() => {
               injectSubtitleLangsung(activeSubtitleTabId, data.korean, data.indonesian, data.latency_ms);
             });
@@ -151,11 +144,7 @@ async function ensureOffscreenDocument() {
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ["OFFSCREEN_DOCUMENT"],
   }).catch(() => []);
-
-  if (existingContexts.length > 0) {
-    return;
-  }
-
+  if (existingContexts.length > 0) return;
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_URL,
     reasons: ["USER_MEDIA"],
@@ -204,17 +193,13 @@ async function startCapture(tabId) {
 
 async function stopCapture() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-
   await chrome.runtime.sendMessage({ type: "stop_capture" }).catch(() => {});
-
   if (ws) {
     try { ws.send(JSON.stringify({ type: "reset" })); } catch (_) {}
     ws.close();
     ws = null;
   }
-
   await closeOffscreenDocument();
-
   const prevTab       = activeSubtitleTabId;
   isCapturing         = false;
   captureTabId        = null;
@@ -222,7 +207,6 @@ async function stopCapture() {
   latestSubtitleSeq   = -1;
   latestPartialSeq    = -1;
   await chrome.storage.local.set({ isCapturing: false, captureTabId: null });
-
   if (prevTab) chrome.tabs.sendMessage(prevTab, { type: "hide_subtitle" }).catch(() => {});
 }
 

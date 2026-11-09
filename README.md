@@ -10,66 +10,54 @@ Real time Korean → Indonesian subtitle di manapun (YouTube, Weverse, VLive, dl
 
 ---
 
+## Kebutuhan
+
+- Windows 10/11
+- Python 3.9 atau lebih baru — [download](https://python.org) (centang **Add Python to PATH** saat install)
+- Google Chrome
+- DeepL API Key (Free tier) — [daftar di sini](https://www.deepl.com/pro-api)
+
+---
+
 ## Setup
 
-### 1. DeepL API Key
+### 1. Download project
 
-1. Daftar di https://www.deepl.com/pro-api (Free tier = 500K karakter/bulan)
-2. Salin API key, nanti diisi di file `.env`
+Download atau clone repo ini, lalu ekstrak ke folder manapun.
 
-### 2. Server Python
+### 2. Jalankan server
 
-**Cara mudah — double-click:**
+Double-click `server/start.bat`.
 
-```
-server/start.bat
-```
+Saat pertama kali dijalankan, script akan otomatis:
+1. Membuat virtual environment Python
+2. Menginstall semua dependencies
+3. Mengunduh model SenseVoice (~155MB, sekali saja)
+4. Membuat file `config.json` dengan nilai default
 
-`start.bat` akan otomatis: membuat venv → install dependencies → download model (~155MB, sekali saja) → menjalankan server.
-
-**Cara manual lewat terminal:**
-
-```cmd
-cd server
-copy .env.example .env
-```
-
-Edit `.env`, isi `DEEPL_API_KEY`:
+Setelah itu akan muncul menu:
 
 ```
-DEEPL_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx
-DEEPL_FREE=true
+  1. Start Server
+  2. Settings
+  0. Keluar
 ```
 
-Lalu setup dan jalankan:
+### 3. Isi DeepL API Key
 
-```cmd
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python main.py
-```
+Pilih **2. Settings** → **1. DeepL API** → ikuti petunjuk untuk mengisi API key.
+Simpan dengan memilih **0. Simpan & keluar** di menu Settings.
 
-Untuk menjalankan berikutnya (venv sudah ada):
-
-```cmd
-cd server
-venv\Scripts\activate
-python main.py
-```
-
-Server berjalan di `ws://localhost:8765`. Pertama kali start, model SenseVoice (~155MB) akan didownload otomatis — tunggu sampai muncul pesan `[STT] Model SenseVoice berhasil dimuat.`
-
-### 3. Chrome Extension
+### 4. Install Chrome Extension
 
 1. Buka Chrome → `chrome://extensions/`
 2. Aktifkan **Developer mode** (toggle kanan atas)
 3. Klik **Load unpacked** → pilih folder `extension/`
-4. Extension muncul di toolbar
+4. Icon Translite muncul di toolbar Chrome
 
-### 4. Penggunaan
+### 5. Mulai pakai
 
-1. Pastikan server sudah berjalan
+1. Pastikan server sudah berjalan (pilih **1. Start Server** di `start.bat`)
 2. Buka tab yang ada audio Korea (YouTube, Weverse, VLive, dll)
 3. Klik icon Translite di toolbar
 4. Klik **▶ Mulai Subtitle**
@@ -77,38 +65,62 @@ Server berjalan di `ws://localhost:8765`. Pertama kali start, model SenseVoice (
 
 ---
 
-## Konfigurasi
+## Settings
 
-Edit file `server/.env`:
+Semua konfigurasi disimpan di `server/config.json` dan bisa diubah melalui menu **Settings** di `start.bat`.
 
-| Key | Default | Keterangan |
-|-----|---------|------------|
-| `DEEPL_API_KEY` | — | **Wajib diisi** |
-| `DEEPL_FREE` | `true` | `true` = Free tier, `false` = Pro |
-| `SERVER_HOST` | `localhost` | Host server |
-| `SERVER_PORT` | `8765` | Port WebSocket server |
+| Kategori | Setting | Default | Keterangan |
+|---|---|---|---|
+| **DeepL** | `api_key` | — | Wajib diisi |
+| | `free_tier` | `true` | `true` = Free, `false` = Pro |
+| | `timeout_seconds` | `3.0` | Timeout request ke DeepL (detik) |
+| **Server** | `host` | `localhost` | Ubah ke `0.0.0.0` untuk akses dari luar |
+| | `port` | `8765` | Port WebSocket server |
+| **STT** | `num_threads` | `2` | Thread CPU untuk inferensi (naikkan sesuai core CPU) |
+| | `language` | `ko` | Bahasa input: `ko`, `zh`, `en`, `ja` |
+| | `use_itn` | `false` | Normalisasi teks (angka, dll) |
+| **VAD** | `silence_trigger_seconds` | `0.20` | Jeda hening sebelum audio diproses (detik) |
+| | `max_utterance_seconds` | `6.0` | Durasi maksimal satu kalimat |
+| | `min_utterance_seconds` | `0.3` | Durasi minimal sebelum dikirim ke STT |
+| | `silence_rms_threshold` | `0.003` | Sensitivitas deteksi suara |
+| **Cache** | `cache_size` | `500` | Jumlah terjemahan yang disimpan di memori |
+
+---
+
+## Tips mengurangi latency
+
+Latency E2E rata-rata sekitar 1500–2500ms. Untuk menurunkannya:
+
+- Naikkan `num_threads` sesuai jumlah core CPU (cek via Task Manager)
+- Turunkan `silence_trigger_seconds` ke `0.10` untuk respons lebih cepat
+- Turunkan `max_utterance_seconds` ke `4.0` (kalimat panjang akan dipotong)
+- Tutup aplikasi berat lainnya agar CPU lebih bebas untuk STT
 
 ---
 
 ## Troubleshooting
 
-**Subtitle tidak muncul:**
-- Pastikan server sudah berjalan dan muncul pesan model loaded
-- Cek console DevTools extension: klik kanan icon → Inspect popup
-- Pastikan ada audio yang sedang diputar di tab tersebut
+**Terminal langsung tutup saat jalankan start.bat**
+- Jalankan dari CMD/PowerShell agar bisa membaca pesan errornya:
+  ```
+  cd server
+  start.bat
+  ```
 
-**"Server tidak berjalan" di popup:**
-- Jalankan `start.bat` atau `python main.py` di folder `server/`
+**"Server tidak berjalan" di popup extension**
+- Pastikan server sudah berjalan dan muncul pesan `[STT] Model SenseVoice berhasil dimuat.`
 - Pastikan port 8765 tidak diblokir firewall
 
-**Model gagal didownload:**
-- Butuh koneksi internet saat pertama kali
-- Hapus file `model.tar.bz2` yang mungkin tersisa lalu coba lagi
-- Model tersimpan di `server/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/`
+**Subtitle tidak muncul**
+- Pastikan ada audio yang sedang diputar di tab tersebut
+- Buka DevTools extension (klik kanan icon → Inspect popup) untuk cek error
 
-**Delay terlalu besar:**
-- Tutup aplikasi berat lainnya untuk membebaskan CPU
-- Pastikan menggunakan model int8 (sudah default)
+**Model gagal didownload**
+- Butuh koneksi internet saat pertama kali
+- Hapus file `model.tar.bz2` yang mungkin tersisa di folder `server/`, lalu coba lagi
+
+**Karakter rusak di terminal**
+- Gunakan CMD atau PowerShell, bukan terminal lain yang tidak support UTF-8
 
 ---
 
@@ -117,20 +129,24 @@ Edit file `server/.env`:
 ```
 translite/
 ├── extension/
-│   ├── manifest.json       # Extension config
-│   ├── background.js       # Service worker, tabCapture, WebSocket
-│   ├── offscreen.html/js   # Audio processing (MV3 requirement)
-│   ├── content.js          # Subtitle overlay di halaman web
-│   ├── audio-processor.js  # AudioWorklet processor
-│   ├── popup.html/js       # UI tombol on/off
-│   └── icons/              # Icon PNG
+│   ├── manifest.json         # Extension config
+│   ├── background.js         # Service worker, tabCapture, WebSocket
+│   ├── offscreen.html/js     # Audio processing (MV3 requirement)
+│   ├── content.js            # Subtitle overlay di halaman web
+│   ├── audio-processor.js    # AudioWorklet processor
+│   ├── popup.html/js         # UI tombol on/off
+│   └── icons/
 ├── server/
-│   ├── main.py             # FastAPI WebSocket server
-│   ├── stt.py              # SenseVoice (sherpa-onnx) wrapper
-│   ├── translate.py        # DeepL API client
+│   ├── main.py               # FastAPI WebSocket server
+│   ├── stt.py                # SenseVoice (sherpa-onnx) wrapper
+│   ├── translate.py          # DeepL API client
+│   ├── config_loader.py      # Loader konfigurasi dari config.json
+│   ├── settings.py           # Menu settings interaktif
+│   ├── setup_config.py       # Inisialisasi config.json saat pertama kali
+│   ├── config.json           # File konfigurasi (dibuat otomatis, tidak dicommit)
 │   ├── requirements.txt
 │   ├── .env.example
-│   └── start.bat           # Windows quick-start
+│   └── start.bat             # Entry point — menu Start / Settings
 ├── .gitignore
 └── README.md
 ```
