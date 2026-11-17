@@ -2,6 +2,8 @@ import json
 import os
 import sys
 
+from config_loader import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_source_language
+
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 
@@ -74,6 +76,15 @@ def menu_stt(cfg: dict):
     _header("Settings > STT (Speech-to-Text)")
     s = cfg.setdefault("stt", {})
 
+    print("  Bahasa yang tersedia di model SenseVoice:")
+    for code, name in SUPPORTED_LANGUAGES.items():
+        print(f"    {code}: {name}")
+    s["language"] = _ask(
+        "  Bahasa utama (kode)",
+        normalize_source_language(s.get("language", DEFAULT_LANGUAGE)),
+        choices=list(SUPPORTED_LANGUAGES),
+    )
+
     print()
     print("  num_threads : jumlah CPU thread untuk inferensi model.")
     print("                Lebih banyak = lebih cepat (sampai batas core CPU).")
@@ -133,6 +144,8 @@ def show_summary(cfg: dict):
     print(f"  Timeout    : {d.get('timeout_seconds', 3.0)}s")
 
     _section("STT")
+    language = normalize_source_language(st.get("language", DEFAULT_LANGUAGE))
+    print(f"  language   : {SUPPORTED_LANGUAGES[language]} ({language})")
     print(f"  num_threads: {st.get('num_threads', 2)}")
     print(f"  use_itn    : {st.get('use_itn', False)}")
 
@@ -154,7 +167,7 @@ def reset_defaults(cfg: dict):
         cfg.clear()
         cfg.update({
             "deepl":     {"api_key": saved_key, "free_tier": True, "timeout_seconds": 3.0},
-            "stt":       {"num_threads": 2, "use_itn": False},
+            "stt":       {"language": DEFAULT_LANGUAGE, "num_threads": 2, "use_itn": False},
             "vad":       {"silence_trigger_seconds": 0.20, "max_utterance_seconds": 6.0, "min_utterance_seconds": 0.3, "silence_rms_threshold": 0.003, "max_silence_buffer_extra": 2},
             "translate": {"cache_size": 500},
         })

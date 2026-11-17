@@ -1,12 +1,13 @@
 # Translite
 
-Real time Korean → Indonesian subtitle di manapun (YouTube, Weverse, VLive, dll).
+Subtitle multibahasa → Indonesia secara real time (YouTube, Weverse, VLive, dll).
 
 **Stack:**
 - Chrome Extension (Manifest V3) — audio capture + overlay UI
 - Python + FastAPI + WebSocket — local server
 - SenseVoice Small int8 (sherpa-onnx) — speech-to-text, berjalan lokal di CPU
-- DeepL API — Korean → Indonesian translation
+- DeepL API — terjemahan otomatis ke bahasa Indonesia
+- Android app mandiri — playback capture + subtitle overlay di perangkat
 
 ---
 
@@ -57,8 +58,8 @@ Simpan dengan memilih **0. Simpan & keluar** di menu Settings.
 
 ### 5. Mulai pakai
 
-1. Pastikan server sudah berjalan (pilih **1. Start Server** di `start.bat`)
-2. Buka tab yang ada audio Korea (YouTube, Weverse, VLive, dll)
+1. Pastikan server sudah berjalan (pilih **1. Start Server** di `start.bat`) dan pilih bahasa utama saat diminta
+2. Buka tab yang memutar audio dalam bahasa pilihan
 3. Klik icon Translite di toolbar
 4. Klik **▶ Mulai Subtitle**
 5. Subtitle muncul sebagai overlay di bagian bawah halaman
@@ -74,7 +75,8 @@ Semua konfigurasi disimpan di `server/config.json` dan bisa diubah melalui menu 
 | **DeepL** | `api_key` | — | Wajib diisi |
 | | `free_tier` | `true` | `true` = Free, `false` = Pro |
 | | `timeout_seconds` | `3.0` | Timeout request ke DeepL (detik) |
-| **STT** | `num_threads` | `2` | Thread CPU untuk inferensi (naikkan sesuai core CPU) |
+| **STT** | `language` | `ko` | Bahasa utama: `zh`, `en`, `ja`, `ko`, atau `yue` |
+| | `num_threads` | `2` | Thread CPU untuk inferensi (naikkan sesuai core CPU) |
 | | `use_itn` | `false` | Normalisasi teks (angka, dll) |
 | **VAD** | `silence_trigger_seconds` | `0.20` | Jeda hening sebelum audio diproses (detik) |
 | | `max_utterance_seconds` | `6.0` | Durasi maksimal satu kalimat |

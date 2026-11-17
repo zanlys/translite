@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Translite",
   "version": "1.0.0",
-  "description": "Real time Korean to Indonesian subtitle on any website using local STT + DeepL",
+  "description": "Real time multilingual to Indonesian subtitles on any website using local STT + DeepL",
   "permissions": [
     "tabCapture",
     "storage",

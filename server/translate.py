@@ -42,7 +42,7 @@ def _cache_put(key: str, value: str):
         _cache[key] = value
 
 
-async def translate_ko_to_id(text: str) -> str:
+async def translate_to_indonesian(text: str) -> str:
     if not text or not text.strip():
         return ""
 
@@ -63,7 +63,6 @@ async def translate_ko_to_id(text: str) -> str:
             },
             json={
                 "text":        [text],
-                "source_lang": "KO",
                 "target_lang": "ID",
             },
         )
@@ -73,7 +72,7 @@ async def translate_ko_to_id(text: str) -> str:
         return translated
 
     except httpx.TimeoutException:
-        print(f"[Terjemah] DeepL timeout, tampilkan teks Korea.")
+        print("[Terjemah] DeepL timeout, tampilkan teks sumber.")
         return text
     except httpx.HTTPStatusError as e:
         print(f"[Terjemah] HTTP {e.response.status_code}: {e.response.text}")

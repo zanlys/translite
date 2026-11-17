@@ -27,6 +27,7 @@ def main():
             "timeout_seconds": 3.0
         },
         "stt": {
+            "language": "ko",
             "num_threads": 2,
             "use_itn": False
         },

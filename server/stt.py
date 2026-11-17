@@ -1,45 +1,64 @@
 import os
 import re
+import threading
 import numpy as np
 import sherpa_onnx
 
-from config_loader import get_config
+from config_loader import SUPPORTED_LANGUAGES, get_config, normalize_source_language
 
-_cfg     = get_config()
-_stt_cfg = _cfg["stt"]
+_recognizer = None
+_recognizer_lock = threading.Lock()
 
 MODEL_DIR   = os.path.join(os.path.dirname(__file__), "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17")
 MODEL_PATH  = os.path.join(MODEL_DIR, "model.int8.onnx")
 TOKENS_PATH = os.path.join(MODEL_DIR, "tokens.txt")
 
-print(f"[STT] Memuat SenseVoice Small int8...")
-print(f"[STT]   model      : {MODEL_PATH}")
-print(f"[STT]   tokens     : {TOKENS_PATH}")
-print(f"[STT]   num_threads: {_stt_cfg['num_threads']}")
 
-asr = sherpa_onnx.OfflineRecognizer.from_sense_voice(
-    model=MODEL_PATH,
-    tokens=TOKENS_PATH,
-    language="ko",
-    use_itn=_stt_cfg["use_itn"],
-    num_threads=_stt_cfg["num_threads"],
-    decoding_method="greedy_search",
-    debug=False,
-    provider="cpu",
-)
+def initialize_recognizer():
+    global _recognizer
+    if _recognizer is not None:
+        return
 
-print("[STT] Model SenseVoice berhasil dimuat.")
+    with _recognizer_lock:
+        if _recognizer is not None:
+            return
+
+        stt_config = get_config()["stt"]
+        language = normalize_source_language(stt_config.get("language"))
+        print("[STT] Memuat SenseVoice Small int8...")
+        print(f"[STT]   model      : {MODEL_PATH}")
+        print(f"[STT]   tokens     : {TOKENS_PATH}")
+        print(f"[STT]   bahasa     : {SUPPORTED_LANGUAGES[language]} ({language})")
+        print(f"[STT]   num_threads: {stt_config['num_threads']}")
+        recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=MODEL_PATH,
+            tokens=TOKENS_PATH,
+            language=language,
+            use_itn=stt_config["use_itn"],
+            num_threads=stt_config["num_threads"],
+            decoding_method="greedy_search",
+            debug=False,
+            provider="cpu",
+        )
+        _recognizer = recognizer
+        print("[STT] Model SenseVoice berhasil dimuat.")
+
+
+def _get_recognizer():
+    if _recognizer is None:
+        initialize_recognizer()
+    if _recognizer is None:
+        raise RuntimeError("SenseVoice recognizer was not initialized.")
+    return _recognizer
 
 _RE_TAG        = re.compile(r"<\|[^|]+\|>")
 _RE_DOTS       = re.compile(r'\.{4,}')
 _RE_COMMAS     = re.compile(r',{2,}')
-_RE_NORMALIZE  = re.compile(r'[\s\-_.,!?~ㅋㅎ하하하하하하]')
-_RE_WHITESPACE = re.compile(r'[\s]')
-_RE_LAUGH_EN   = re.compile(r'^(ha|he|ho|hi|hu|lol|lmao|kek|hah|heh){2,}[!~]*$', re.IGNORECASE)
-_RE_LAUGH_PATTERNS = re.compile(
-    r'^[ㅋ]+$|^[ㅎ]+$|^(하)+$|^(히)+$|^(호)+$|^(헤)+$|^(후)+$|^(크)+$|^(푸)+$'
+_RE_LAUGHTER  = re.compile(
+    r'^(?:(?:ha|he|ho|hi|hu|lol|lmao|kek|hah|heh|ja|哈|呵|嘻|嘿|は|ひ|ふ|へ|ほ|あ|笑|하|히|호|헤|후|크|푸|ㅋ|ㅎ)){2,}$',
+    re.IGNORECASE,
 )
-_LAUGH_CHARS = set('ㅋㅎ')
+_RE_LAUGHTER_NORMALIZE = re.compile(r'[\s\W_]+')
 
 
 def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
@@ -51,11 +70,16 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     if sample_rate != 16000:
         audio_np = _resample(audio_np, sample_rate, 16000)
 
-    stream = asr.create_stream()
+    recognizer = _get_recognizer()
+    stream = recognizer.create_stream()
     stream.accept_waveform(16000, audio_np)
-    asr.decode_stream(stream)
+    recognizer.decode_stream(stream)
 
-    result = stream.result.text.strip()
+    return filter_transcript(stream.result.text)
+
+
+def filter_transcript(text: str) -> str:
+    result = text.strip()
     result = _RE_TAG.sub("", result).strip()
 
     if not result:
@@ -77,18 +101,8 @@ def transcribe_audio(audio_bytes: bytes, sample_rate: int = 16000) -> str:
     if len(result) < 2:
         return ""
 
-    normalized    = _RE_NORMALIZE.sub('', result.lower())
-    stripped_laugh = _RE_WHITESPACE.sub('', result)
-
-    if _RE_LAUGH_PATTERNS.fullmatch(stripped_laugh):
-        return ""
-
-    char_count  = len([c for c in result if c not in (' ', '\n')])
-    laugh_count = len([c for c in result if c in _LAUGH_CHARS])
-    if char_count > 0 and laugh_count / char_count > 0.7:
-        return ""
-
-    if _RE_LAUGH_EN.fullmatch(normalized):
+    normalized_laughter = _RE_LAUGHTER_NORMALIZE.sub("", result.casefold())
+    if _RE_LAUGHTER.fullmatch(normalized_laughter):
         return ""
 
     return result

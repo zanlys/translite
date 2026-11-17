@@ -6,6 +6,15 @@ load_dotenv()
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
+SUPPORTED_LANGUAGES = {
+    "zh": "Mandarin / Tionghoa",
+    "en": "Inggris",
+    "ja": "Jepang",
+    "ko": "Korea",
+    "yue": "Kanton",
+}
+DEFAULT_LANGUAGE = "ko"
+
 _DEFAULTS = {
     "deepl": {
         "api_key": "",
@@ -13,6 +22,7 @@ _DEFAULTS = {
         "timeout_seconds": 3.0,
     },
     "stt": {
+        "language": DEFAULT_LANGUAGE,
         "num_threads": 2,
         "use_itn": False,
     },
@@ -59,7 +69,12 @@ def load_config() -> dict:
     if not cfg["deepl"]["api_key"]:
         cfg["deepl"]["free_tier"] = os.getenv("DEEPL_FREE", "true").lower() == "true"
 
+    cfg["stt"]["language"] = normalize_source_language(cfg["stt"].get("language"))
     return cfg
+
+
+def normalize_source_language(language: str | None) -> str:
+    return language if isinstance(language, str) and language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
 
 
 def save_config(cfg: dict):

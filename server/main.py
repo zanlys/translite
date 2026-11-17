@@ -2,6 +2,7 @@ import os
 import asyncio
 import base64
 import json
+import sys
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -12,9 +13,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from config_loader import get_config
-from stt import transcribe_audio
-from translate import translate_ko_to_id
+from config_loader import (
+    DEFAULT_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    get_config,
+    normalize_source_language,
+)
+from stt import initialize_recognizer, transcribe_audio
+from translate import translate_to_indonesian
 
 _cfg = get_config()
 
@@ -36,6 +42,7 @@ STT_EXECUTOR = ThreadPoolExecutor(max_workers=_cfg["stt"]["num_threads"], thread
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await asyncio.to_thread(initialize_recognizer)
     yield
     STT_EXECUTOR.shutdown(wait=False)
 
@@ -148,7 +155,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             t_start = time.monotonic()
             try:
-                translation = await translate_ko_to_id(transcript)
+                translation = await translate_to_indonesian(transcript)
             except Exception as e:
                 print(f"[Trans] Error seq {seq}: {e}")
                 translate_queue.task_done()
@@ -169,12 +176,15 @@ async def websocket_endpoint(ws: WebSocket):
             lat_e2e.record(e2e_ms)
 
             print(f"[Trans {t_trans_ms:.0f}ms | E2E {total_ms}ms] seq={seq}")
-            print(f"  KO: {transcript}")
+            language = normalize_source_language(_cfg["stt"].get("language"))
+            print(f"  {SUPPORTED_LANGUAGES[language]}: {transcript}")
             print(f"  ID: {translation}")
 
             try:
                 await ws.send_text(json.dumps({
                     "type":       "subtitle",
+                    "transcript": transcript,
+                    "source_language": language,
                     "korean":     transcript,
                     "indonesian": translation,
                     "latency_ms": total_ms,
@@ -207,7 +217,8 @@ async def websocket_endpoint(ws: WebSocket):
             return
 
         last_transcript = transcript
-        print(f"[STT {t_stt_ms:.0f}ms] seq={seq} KO: {transcript}")
+        language = normalize_source_language(_cfg["stt"].get("language"))
+        print(f"[STT {t_stt_ms:.0f}ms] seq={seq} {SUPPORTED_LANGUAGES[language]}: {transcript}")
 
         nonlocal latest_queued_seq
         latest_queued_seq = max(latest_queued_seq, seq)
@@ -339,5 +350,33 @@ async def websocket_endpoint(ws: WebSocket):
         print("[WS] Koneksi ditutup.")
 
 
+def choose_source_language():
+    if not sys.stdin.isatty():
+        return
+
+    stt_config = _cfg["stt"]
+    current = normalize_source_language(stt_config.get("language", DEFAULT_LANGUAGE))
+    print("\n  Pilih bahasa utama STT (Enter mempertahankan pilihan tersimpan):")
+    for index, (code, name) in enumerate(SUPPORTED_LANGUAGES.items(), start=1):
+        print(f"    {index}. {name} ({code})")
+
+    choices = list(SUPPORTED_LANGUAGES)
+    while True:
+        selected = input(f"  Bahasa [{current}]: ").strip().lower()
+        if not selected:
+            break
+        if selected.isdigit() and 1 <= int(selected) <= len(choices):
+            current = choices[int(selected) - 1]
+            break
+        if selected in SUPPORTED_LANGUAGES:
+            current = selected
+            break
+        print(f"  Masukkan nomor 1-{len(choices)} atau kode bahasa yang tersedia.")
+
+    stt_config["language"] = current
+    print(f"  Bahasa utama: {SUPPORTED_LANGUAGES[current]} ({current})")
+
+
 if __name__ == "__main__":
+    choose_source_language()
     uvicorn.run("main:app", host=HOST, port=PORT, log_level="info", reload=False)

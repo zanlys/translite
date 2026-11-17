@@ -17,4 +17,5 @@ server/*.zip
 Thumbs.db
 desktop.ini
 
+android/
 .vscode/
